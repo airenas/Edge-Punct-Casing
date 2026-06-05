@@ -13,7 +13,7 @@ import random
 from shutil import copyfile
 from typing import Any, Dict, Optional, Tuple, Union, List
 import sentencepiece as spm
-from model import Model,Model_new,Model_test
+from model import Model_new
 from data_module import DataModule, sort_batch
 import torch.distributed as dist
 from datetime import datetime
@@ -38,7 +38,7 @@ from utils import (
 python3 train.py \
 	--world-size 4 \
 	--do_finetune True \
-	--finetune_ckpt ../output_lr002_384_BS64_3conv_1fc_Add\&Norm_WeightsInitialize_30epoch/epoch-15.pt \
+	--finetune_ckpt ../output_lr002_384_BS64_3conv_1fc_AddNorm_WeightsInitialize_30epoch/epoch-15.pt \
 	--data_dir ../finetune_data/ \
 	--exp_dir ../output/ \
 	--bpe_model ../bpe_model/bpe.model \
@@ -392,8 +392,7 @@ def run(rank, world_size, args):
 											factor=params.factor, 
 											patience=params.patience,
 											threshold=0.0005,
-											threshold_mode='abs',
-											verbose=True,
+											threshold_mode='abs'
 											)
 
 	data_module = DataModule(args, sp)
@@ -520,4 +519,12 @@ torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
 
 if __name__ == "__main__":
+	formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+	logging.basicConfig(
+		format=formatter,
+		level=getattr(logging, os.environ.get("LOGLEVEL", "WARNING").upper(), logging.WARNING),
+	)
+
+	logging.info("Starting")
 	main()
+	logging.info("Done")

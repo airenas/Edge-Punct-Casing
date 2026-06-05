@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import sentencepiece
 import torch
@@ -30,10 +31,10 @@ class TextDataset(Dataset):
 
 	def __getitem__(self, idx):
 		if isinstance(idx, slice):
-			print(f"idx:{idx}, idx.start:{idx.start}, idx.stop:{idx.stop}, idx.step:{idx.step}")
-			print(self.features[idx])
+			logging.info(f"idx:{idx}, idx.start:{idx.start}, idx.stop:{idx.stop}, idx.step:{idx.step}")
+			logging.info(self.features[idx])
 			for i in range(*idx.indices(len(self))):
-				print(i)
+				logging.info(i)
 			return [self.__getitem__(i) for i in range(*idx.indices(len(self)))]
 		else:
 			token_ids = self.features[idx].token_ids
@@ -46,11 +47,12 @@ class TextDataset(Dataset):
 			return np.array(token_ids), np.array(label_ids), np.array(valid_ids), label_len, np.array(label_masks)
 
 	def readLines(self):
+		logging.info("Reading text...")
 		with open(self.text_path, "r") as hand:
 			for line in hand:
 				self.text_lines.append(line)
 
-		print("Reading examples...")
+		logging.info("Reading examples...")
 		with open(self.label_path, "r") as hand:
 			lines = hand.readlines()
 			for i, line in enumerate(tqdm(lines)):
@@ -91,7 +93,7 @@ class TextDataset(Dataset):
 
 		self.last_part_sentence = InputFeatures()
 
-		print(f"Converting examples to features... bos_id:{tokenizer.piece_to_id('<s>')}, eos_id:{tokenizer.piece_to_id('</s>')}")
+		logging.info(f"Converting examples to features... bos_id:{tokenizer.piece_to_id('<s>')}, eos_id:{tokenizer.piece_to_id('</s>')}")
 		for il, line in enumerate(tqdm(self.text_lines)):
 			words = line.split()
 
@@ -168,7 +170,7 @@ class TextDataset(Dataset):
 
 							self.last_part_sentence.valid.append(0)
 			else:
-				print(f"tokens num:[{tokens_num}] ----> {line}")
+				logging.info(f"tokens num:[{tokens_num}] ----> {line}")
 
 	def save_features(self, filename):
 		with open(filename, "w") as fp:
@@ -277,13 +279,13 @@ class DataModule(object):
 
 	def train_dataloader(self) -> DataLoader:
 		if not os.path.isfile(self.train_features_file):
-			print("Extracting train features:")
+			logging.info("Extracting train features:")
 			self.train_dataset.convert_examples_to_features_bos_eos(self.args.max_seq_length, self.sp)
 
-			print("First time to extract features, save features to local file for next time quick load...")
+			logging.info("First time to extract features, save features to local file for next time quick load...")
 			self.train_dataset.save_features(self.train_features_file)
 		else:
-			print("Train feature file already exists, loading...")
+			logging.info("Train feature file already exists, loading...")
 			self.train_dataset.load_features(self.train_features_file, self.args.max_seq_length)
 		# print(f"print first 2 example in train dataset:\n{self.train_dataset[:2]}")
 
@@ -304,13 +306,13 @@ class DataModule(object):
 
 	def valid_dataloader(self) -> DataLoader:
 		if not os.path.isfile(self.valid_features_file):
-			print("Extracting valid features:")
+			logging.info("Extracting valid features:")
 			self.valid_dataset.convert_examples_to_features_bos_eos(self.args.max_seq_length, self.sp)
 
-			print("First time to extract features, save features to local file for next time quick load...")
+			logging.info("First time to extract features, save features to local file for next time quick load...")
 			self.valid_dataset.save_features(self.valid_features_file)
 		else:
-			print("Valid feature file already exists, loading...")
+			logging.info("Valid feature file already exists, loading...")
 			self.valid_dataset.load_features(self.valid_features_file, self.args.max_seq_length)
 		# print(f"print first 2 example in valid dataset:\n{self.valid_dataset[:2]}")
 
@@ -328,13 +330,13 @@ class DataModule(object):
 
 	def test_dataloader(self) -> DataLoader:
 		if not os.path.isfile(self.test_features_file):
-			print("Extracting test features:")
+			logging.info("Extracting test features:")
 			self.test_dataset.convert_examples_to_features_bos_eos(self.args.max_seq_length, self.sp)
 
-			print("First time to extract features, save features to local file for next time quick load...")
+			logging.info("First time to extract features, save features to local file for next time quick load...")
 			self.test_dataset.save_features(self.test_features_file)
 		else:
-			print("Test feature file already exists, loading...")
+			logging.info("Test feature file already exists, loading...")
 			self.test_dataset.load_features(self.test_features_file, self.args.max_seq_length)
 		# print(f"print first 2 example in test dataset:\n{self.test_dataset[:2]}")
 
