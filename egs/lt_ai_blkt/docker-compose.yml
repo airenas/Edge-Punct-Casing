@@ -1,0 +1,54 @@
+x-logging-default:
+  &default-logging
+  options:
+    max-size: '20m'
+    max-file: '3'
+  driver: json-file
+
+services:
+  lex:
+    image: semantikadocker.vdu.lt/lex:2021.04.02
+    restart: unless-stopped
+    logging: *default-logging 
+
+
+  tagger-ml:
+    image: airenas/ml-tagger:${TAGGER_ML_VERSION}
+    environment:
+      - SEGMENTATION_URL=http://lex:8080/
+      - RUST_LOG=DEBUG,tracing=ERROR,ml_tagger::processors::lemmatize_words=INFO,hyper_util::client::legacy::pool=INFO,ml_tagger::processors::embedding=INFO
+      - ONNX_THREADS=4
+      - DATA_DIR=/data
+      - EMBEDDINGS_FILE=mmap:/data/delfi_cbow.150.fifu
+      - ONNX_FILE=/data/model.onnx
+      - LEMMA_URL=http://lemma:8000/analyze/{}
+      - LEX_URL=http://lex:8080/
+      - LEMMA_CACHE=50000
+      - EMBEDDINGS_CACHE=40000
+      - CACHE_KEY=01J4HMRM6GAHP6HNE67JRXXKT4
+    logging: *default-logging   
+    restart: unless-stopped
+    ports:
+      - "${PORT}:8000"
+    volumes:
+      - tagger-data:/data:ro
+    depends_on:
+      - tagger-vol    
+
+  tagger-vol: 
+    image: intelektikalt/ml-tagger-data:${TAGGER_VOL_VERSION}
+    volumes:
+      - tagger-data:/data:rw
+
+  lemma:
+    image: airenas/lema:${LEMA_SERVICE_VERSION}
+    restart: unless-stopped
+    logging: *default-logging 
+    environment:
+     - LEMA_HUNSPELL_SKIP_OFFENSIVE=false
+     - LEMA_TYPE=hunspell_lema
+     - SECRET=${LEMA_SECRET}  
+
+volumes:
+  tagger-data:
+    name: tagger-data

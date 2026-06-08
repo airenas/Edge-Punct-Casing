@@ -9,7 +9,7 @@ corpus_dir?=corpus
 data_dir?=data
 hf_dataset?=VSSA-SDSA/LT_AI_BLKT
 hf_text_field?=text
-tagger_url?=http://localhost:8000
+tagger_url?=http://localhost:8000/tag
 limit?=10000000000
 gpus?=1
 bpe_vocab_size?=5000
@@ -40,9 +40,14 @@ $(corpus_dir)/data.txt: | $(corpus_dir)
 	$(python_cmd) ./local/dwn.py --dataset $(hf_dataset) --text-field $(hf_text_field) --output $(corpus_dir)/data.txt \
 	 	--limit $(limit) 
 $(corpus_dir)/sentences.txt: $(corpus_dir)/data.txt 
-	$(python_cmd) ./local/tagger.py --input $^ --output $@ --tagger_url $(tagger_url)
-$(corpus_dir)/cleaned.txt: $(corpus_dir)/sentences.txt 
-	$(python_cmd) ./local/drop_sentences.py --input $^ --output $@
+	$(python_cmd) ./local/tagger.py --input $^ --output $@_ --tagger-url $(tagger_url)
+	mv $@_ $@
+$(corpus_dir)/sentences_c.txt: $(corpus_dir)/sentences.txt 
+	$(python_cmd) ./local/fix_case.py --input $^ --output $@_
+	mv $@_ $@
+$(corpus_dir)/cleaned.txt: $(corpus_dir)/sentences_c.txt
+	$(python_cmd) ./local/clean.py --input $^ --output $@_
+	mv $@_ $@
 ###################################################################
 start/tagger:
 	docker compose up -d

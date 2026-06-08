@@ -2,3 +2,5 @@
 egs/lt_ai_blkt/.corpus
 egs/lt_ai_blkt/.exp
 Makefile.options
+egs/lt_ai_blkt/corpus
+egs/lt_ai_blkt/.env
