@@ -6,7 +6,7 @@ import os
 from tqdm import tqdm
 
 from egs.lt_ai_blkt.local.punctuation import PUNCTUATION
-from egs.lt_ai_blkt.local.utils import Word
+from egs.lt_ai_blkt.local.utils import Word, split_word_punctuation
 
 
 def get_args():
@@ -35,25 +35,17 @@ def has_num(word):
 
 def allowed_symbols(word):
     for c in word:
-        if not (c.isalpha() or c in PUNCTUATION):
-            return False
-    return True
+        cl = c.lower()
+        if 'a' <= cl <= 'z':
+            continue
+        if cl in "ąčęėįšųūž":
+            continue
+        return False
+    return len(word) > 0
 
 
-def split_word_punctuation(word):
-    w = ""
-    p = ""
-    for c in word:
-        if c.isalpha():
-            w += c
-        else:
-            p += c
-    return w, p
-
-
-def allowed_punctuation(word):
-    w, punct = split_word_punctuation(word)
-    if w == "" and punct != "":
+def allowed_punctuation(wrd, punct):
+    if wrd == "" and punct != "":
         return False
     for p in punct:
         if p not in PUNCTUATION:
@@ -67,10 +59,11 @@ def skip(w):
         return True
     if w.mi.startswith("D"):
         return True
-    if not allowed_symbols(w.word):
+    wrd, punct = split_word_punctuation(w.word)
+    if not allowed_punctuation(wrd, punct):
         return True
-    if not allowed_punctuation(w.word):
-        return True        
+    if not allowed_symbols(wrd):
+        return True
     return False
 
 

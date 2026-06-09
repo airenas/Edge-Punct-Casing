@@ -2,11 +2,13 @@ def several_upper(s):
     # Check if the string contains at least two uppercases alphabetic character
     return sum(1 for c in s if c.isupper()) >= 2
 
+
 def has_upper(s):
     for c in s:
         if c.isupper():
             return True
     return False
+
 
 class Word:
     def __init__(self, string):
@@ -23,3 +25,14 @@ class Word:
             return f"{self.word}(={self.mi})"
         else:
             return self.word
+
+
+def split_word_punctuation(word):
+    w = ""
+    p = ""
+    for c in word:
+        if c.isalpha():
+            w += c
+        else:
+            p += c
+    return w, p

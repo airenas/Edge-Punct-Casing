@@ -57,20 +57,19 @@ prepare/corpus: $(corpus_dir)/cleaned.txt
 ###################################################################
 ###################################################################
 ###################################################################
-$(data_dir)/texts/cleaned.txt: $(corpus_dir)/data.txt | $(data_dir)/texts
-	cp $(corpus_dir)/data.txt $@
-$(data_dir)/texts/train.txt: $(data_dir)/texts/cleaned.txt | $(data_dir)/texts
-	cp $^ $@
-$(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model: $(data_dir)/texts/cleaned.txt | $(data_dir)/lang_bpe_$(bpe_vocab_size)
-	$(python_cmd) ./local/sentence_piece.py --input $(data_dir)/texts/cleaned.txt --vocab_size $(bpe_vocab_size) --output_dir $(data_dir)/lang_bpe_$(bpe_vocab_size)
-$(data_dir)/texts/train_text.txt $(data_dir)/texts/train_labels.txt: $(data_dir)/texts/train.txt
-	$(python_cmd) ./local/preprocess.py --input $(data_dir)/texts/train.txt --output_text $(data_dir)/texts/train_text.txt --output_labels $(data_dir)/texts/train_labels.txt
+$(data_dir)/texts/train.txt $(data_dir)/texts/dev.txt $(data_dir)/texts/test.txt: $(corpus_dir)/cleaned.txt | $(data_dir)/texts
+	$(python_cmd) ./local/split.py --input $^ --output-dir $(data_dir)/texts
+$(data_dir)/texts/lower.txt: $(data_dir)/texts/train.txt 
+	$(python_cmd) ./local/lower.py --input $^ --output $@_
+	mv $@_ $@
+$(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model: $(data_dir)/texts/lower.txt | $(data_dir)/lang_bpe_$(bpe_vocab_size)
+	$(python_cmd) ./local/sentence_piece.py --input $(data_dir)/texts/lower.txt --vocab_size $(bpe_vocab_size) --output_dir $(data_dir)/lang_bpe_$(bpe_vocab_size)
 ###################################################################
 prepare/data: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model
 .PHONY: prepare/data
 ###################################################################
-train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_text.txt | $(exp_dir)
-	$(python_cmd) ./train.py \
+train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train.txt | $(exp_dir)
+	$(python_cmd) ./../../train.py \
 		--world-size $(gpus) \
 		--do_finetune False \
 		--data_dir $(data_dir)/texts \
