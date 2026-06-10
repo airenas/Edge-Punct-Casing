@@ -29,10 +29,9 @@ class Word:
 
 def split_word_punctuation(word):
     w = ""
-    p = ""
     for c in word:
         if c.isalpha():
             w += c
         else:
-            p += c
-    return w, p
+            return w, word[len(w):]
+    return w, ""

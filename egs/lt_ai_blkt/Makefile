@@ -96,6 +96,10 @@ test: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/test_fe
 		--epoch $(epoch) \
 		--batch_size $(batch_size) 
 .PHONY: test
+_info/%: $(data_dir)/texts/%.txt
+	$(python_cmd) ./local/data_info.py --input $^
+info/test: _info/test
+.PHONY: info/test	
 ###################################################################
 ###################################################################
 export: 

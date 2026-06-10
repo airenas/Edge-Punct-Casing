@@ -47,12 +47,12 @@ def allowed_symbols(word):
 def allowed_punctuation(wrd, punct):
     if wrd == "" and punct != "":
         return False
-    for p in punct:
-        if p not in PUNCTUATION:
-                return False
+    if punct not in PUNCTUATION:
+        return False
     return True
 
-def skip(w):
+
+def skip(w: Word):
     if has_num(w.word):
         return True
     if w.word in ["I", "II", "V", "III", "IV", "VI", "VII", "VIII", "IX", "X"] and w.mi.startswith("M"):
@@ -72,9 +72,12 @@ def is_ok(words):
         if skip(w):
             return False
     if len(words) > 0:
+        first = words[0].word
+        if len(first) > 0 and first[0].islower():
+            return False
         last = words[-1].word
         _, p = split_word_punctuation(last)
-        if p not in PUNCTUATION:
+        if p == "":
             return False
     return True
 
