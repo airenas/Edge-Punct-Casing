@@ -1,18 +1,19 @@
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict
 
 import onnx
 import torch
 import torch.nn as nn
 # import torch.ao.quantization.quantize_dynamic as torch_quantize_dynamic
 from onnxruntime.quantization import QuantType, quantize_dynamic
-from train import get_model, get_params
-from utils import (AttributeDict, setup_logger)
 from onnxsim import simplify
-from onnx import numpy_helper, helper
-from onnxconverter_common import float16
+
+from egs.lt_ai_blkt.local.case import LOWER, UPPER, CAP, MIX_CASE
+from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_MAP, EXCLAMATION, QUESTION, PERIOD, COMMA
+from train import get_model, get_params
+from utils import (setup_logger)
 
 
 ##### usage:
@@ -44,6 +45,7 @@ def get_parser():
 
     return parser
 
+
 def add_meta_data(filename: str, meta_data: Dict[str, str]):
     """Add meta data to an ONNX model. It is changed in-place.
 
@@ -61,11 +63,12 @@ def add_meta_data(filename: str, meta_data: Dict[str, str]):
 
     onnx.save(model, filename)
 
+
 def export_model(
-	model: nn.Module,
-	filename: str,
-    max_seq_length, int = 200,
-	opset_version: int = 11,
+        model: nn.Module,
+        filename: str,
+        max_seq_length, int=200,
+        opset_version: int = 11,
 ) -> None:
     token_ids = torch.ones(1, max_seq_length, dtype=torch.int32)
     valid_ids = torch.ones(1, max_seq_length, dtype=torch.int32)
@@ -74,33 +77,34 @@ def export_model(
     model = torch.jit.trace(model, (token_ids, valid_ids, label_lens))
 
     torch.onnx.export(
-                model,
-				(token_ids, valid_ids, label_lens),
-				filename,
-                verbose=False,
-				opset_version=opset_version,
-                # do_constant_folding=False,
-				input_names=["token_ids", "valid_ids", "label_lens"],
-				output_names=["active_case_logits", "active_punct_logits", "mask"],
-				dynamic_axes={
-					"token_ids": {0: "N", 1: "T"},
-					"valid_ids": {0: "N", 1: "T"},
-					"label_lens": {0: "N"},
-					"active_case_logits": {0: "Valid token ids num", 1: "case num"},
-					"active_punct_logits": {0: "Valid token ids num", 1: "punct num"},
-                    "mask": {0: "N", 1: "T'"},
-				},
+        model,
+        (token_ids, valid_ids, label_lens),
+        filename,
+        verbose=False,
+        opset_version=opset_version,
+        # do_constant_folding=False,
+        input_names=["token_ids", "valid_ids", "label_lens"],
+        output_names=["active_case_logits", "active_punct_logits", "mask"],
+        dynamic_axes={
+            "token_ids": {0: "N", 1: "T"},
+            "valid_ids": {0: "N", 1: "T"},
+            "label_lens": {0: "N"},
+            "active_case_logits": {0: "Valid token ids num", 1: "case num"},
+            "active_punct_logits": {0: "Valid token ids num", 1: "punct num"},
+            "mask": {0: "N", 1: "T'"},
+        },
     )
 
     meta_data = {
-        "NO_PUNCT": "0",
-        "COMMA": "1",
-        "PERIOD": "2",
-        "QUESTION": "3",
-        "LOWER": "0",
-        "UPPER": "1",
-        "CAP": "2",
-        "MIX_CASE": "3",        
+        "NO_PUNCT": f"{PUNCTUATION_MAP.get("", 0)}",
+        "COMMA": f"{PUNCTUATION_MAP.get(COMMA, 0)}",
+        "PERIOD": f"{PUNCTUATION_MAP.get(PERIOD, 0)}",
+        "QUESTION": f"{PUNCTUATION_MAP.get(QUESTION, 0)}",
+        "EXCLAMATION": f"{PUNCTUATION_MAP.get(EXCLAMATION, 0)}",
+        "LOWER": f"{LOWER}",
+        "UPPER": f"{UPPER}",
+        "CAP": f"{CAP}",
+        "MIX_CASE": f"{MIX_CASE}",
     }
     logging.info(f"meta_data: {meta_data}")
 
@@ -133,8 +137,8 @@ def main():
 
     model.to(device)
 
-    if params.epoch > 0 :
-        ptfile = f"{params.exp_dir}/epoch-{params.epoch-1}.pt"
+    if params.epoch > 0:
+        ptfile = f"{params.exp_dir}/epoch-{params.epoch - 1}.pt"
     else:
         ptfile = f"{params.exp_dir}/checkpoint-{params.batch}.pt"
     logging.info(f"Loading checkpoint from {ptfile}")
@@ -150,13 +154,12 @@ def main():
     logging.info("Exporting model")
     model_filename = params.exp_dir / f"model.onnx"
     export_model(
-    	model, 
-    	model_filename,
-        max_seq_length = params.max_seq_length,
-    	opset_version = opset_version,
+        model,
+        model_filename,
+        max_seq_length=params.max_seq_length,
+        opset_version=opset_version,
     )
     logging.info(f"Exported model to {model_filename}")
-
 
     onnx_model = onnx.load(model_filename)
     model_sim, check = simplify(onnx_model)
@@ -176,7 +179,6 @@ def main():
     # model = onnx.load(model_sim_filename)
     # model_fp16 = float16.convert_float_to_float16(model)
     # onnx.save(model_fp16, model_fp16_filename)
-
 
 
 if __name__ == "__main__":

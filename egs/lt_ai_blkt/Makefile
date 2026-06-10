@@ -16,6 +16,8 @@ bpe_vocab_size?=5000
 exp_dir?=$(data_dir)/exp
 gpus?=1
 epochs?=20
+# for test, we can specify epoch to use, by default it will be the same as epochs for training
+epoch?=$(epochs) 
 batch_size?=256
 ###################################################################
 info:
@@ -72,7 +74,7 @@ prepare/data: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
 	$(data_dir)/texts/train_features.txt $(data_dir)/texts/dev_features.txt $(data_dir)/texts/test_features.txt
 .PHONY: prepare/data
 ###################################################################
-train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train.txt | $(exp_dir)
+train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_features.txt $(data_dir)/texts/dev_features.txt | $(exp_dir)
 	$(python_cmd) ./../../train.py \
 		--world-size $(gpus) \
 		--do_finetune False \
@@ -83,6 +85,24 @@ train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train.
 		--epochs $(epochs) \
 		--batch_size $(batch_size) 
 .PHONY: train
+###################################################################
+###################################################################
+test: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/test_features.txt | $(exp_dir)
+	$(python_cmd) ./../../decode.py \
+		--world-size $(gpus) \
+		--data_dir $(data_dir)/texts \
+		--exp_dir $(exp_dir) \
+		--bpe_model $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
+		--epoch $(epoch) \
+		--batch_size $(batch_size) 
+.PHONY: test
+###################################################################
+###################################################################
+export: 
+	$(python_cmd) ./../../export-onnx.py \
+		--exp_dir $(exp_dir) \
+		--epoch $(epoch)
+.PHONY: export
 ###################################################################
 ## just clean data after download
 clean/data:

@@ -1,6 +1,5 @@
 import argparse
 import logging
-import os
 
 import numpy as np
 import sentencepiece
@@ -142,16 +141,7 @@ class DataModule(object):
         return valid_dataloader
 
     def test_dataloader(self) -> DataLoader:
-        if not os.path.isfile(self.test_features_file):
-            logging.info("Extracting test features:")
-            self.test_dataset.convert_examples_to_features_bos_eos(self.args.max_seq_length, self.sp)
-
-            logging.info("First time to extract features, save features to local file for next time quick load...")
-            self.test_dataset.save_features(self.test_features_file)
-        else:
-            logging.info("Test feature file already exists, loading...")
-            self.test_dataset.load_features(self.test_features_file, self.args.max_seq_length)
-        # print(f"print first 2 example in test dataset:\n{self.test_dataset[:2]}")
+        self.test_dataset.load_features(self.test_features_file, self.args.max_seq_length)
 
         if self.args.world_size > 1:
             test_sampler = DistributedSampler(self.test_dataset)
@@ -162,8 +152,7 @@ class DataModule(object):
             sampler=test_sampler,
             batch_size=self.args.batch_size
         )
-
-        return test_dataloader, self.test_text
+        return test_dataloader
 
 
 def sort_batch(label_lens, valid_output, labels, label_masks, valid_ids=None):

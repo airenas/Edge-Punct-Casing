@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from data_module import DataModule
+from egs.lt_ai_blkt.local.case import CASE_ID_MAP
 from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_MAP
 from model import Model_new
 from utils import (
@@ -159,7 +160,7 @@ def get_params() -> AttributeDict:
             "sequence_size": 200,
             "hidden_size1": 384,
             "hidden_size2": 384,
-            "out_size_case": 4,
+            "out_size_case": len(CASE_ID_MAP),
             "out_size_punct": len(PUNCTUATION_MAP),
             "dropout": 0.5,
             "gamma": 0.5,  # StepLR
@@ -345,7 +346,7 @@ def run(rank, world_size, args):
     if world_size > 1:
         setup_dist(rank, world_size, params.master_port)
 
-    setup_logger(f"{params.exp_dir}/log-train")
+    setup_logger(f"{params.exp_dir}/log-train", use_console=False)
 
     device = torch.device("cpu")
     if torch.cuda.is_available():

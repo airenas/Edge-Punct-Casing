@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from tqdm import tqdm
 
+from egs.lt_ai_blkt.local.case import get_case_id
 from egs.lt_ai_blkt.local.punctuation import get_punctuation_id
 from egs.lt_ai_blkt.local.utils import split_word_punctuation
 
@@ -24,7 +25,7 @@ def split_text(line):
     for wi in line.split():
         w, p = split_word_punctuation(wi)
         words.append(w.lower())
-        case_labels.append(get_punctuation_id(w))
+        case_labels.append(get_case_id(w))
         punct_labels.append(get_punctuation_id(p))
     return words, case_labels, punct_labels
 

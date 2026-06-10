@@ -1,41 +1,26 @@
-import os
 import argparse
 import logging
-import torch
-import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch import Tensor
-from pathlib import Path
+import os
 import random
-from shutil import copyfile
-from typing import Any, Dict, Optional, Tuple, Union
+from pathlib import Path
+
 import sentencepiece as spm
-from model import Model
-from data_module import DataModule, sort_batch
-import torch.distributed as dist
-from datetime import datetime
+import torch
 import torch.nn.functional as F
-from train import get_model, get_params
-from utils import (AttributeDict, setup_logger)
 from tqdm import tqdm
 
-import onnxruntime as ort
-import numpy as np
+from data_module import DataModule
+from egs.lt_ai_blkt.local.case import CASE_ID_MAP
+from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_ID_MAP
+from train import get_model, get_params
+from utils import (setup_logger)
+
+
+# import onnxruntime as ort
+
 
 ##### usage
 ## python3 decode.py --data_dir ../data/ --exp_dir ../output/ --bpe_model ../bpe_model/bpe.model --batch 1000
-
-###### !!! keep align with process_data.py
-punct_id = {0:"NO_PUNCT",
-             1:"COMMA",
-             2:"PERIOD",
-             3:"QUESTION",
-            }
-case_id = {0:"LOWER",
-            1:"UPPER",
-            2:"CAP",
-            3:"MIX_CASE",
-            }
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -46,7 +31,7 @@ def get_parser():
                         required=True,
                         help="The input data dir. Should include text file - words.txt and label file - labels.txt")
     parser.add_argument("--exp_dir",
-                    	default=None,
+                        default=None,
                         type=str,
                         required=True,
                         help="The experiment dir contains .pt")
@@ -68,7 +53,7 @@ def get_parser():
     parser.add_argument("--world-size",
                         type=int,
                         default=1,
-                        help="Number of GPUs for DDP training.",)
+                        help="Number of GPUs for DDP training.", )
     parser.add_argument("--epoch",
                         default=-1,
                         type=int,
@@ -80,13 +65,15 @@ def get_parser():
                         # required=True,
                         help="The batch pt used for decoding")
 
-    return parser 
+    return parser
+
 
 def inc(d, k):
     if k in d:
         d[k] += 1
     else:
         d[k] = 1
+
 
 def get_metrics(output, target):
     assert len(output) == len(target), f"output len:{output} != target len:{target}"
@@ -110,7 +97,8 @@ def get_metrics(output, target):
     recall = {k: (true_predicted[k] if k in true_predicted else 0) / all_expected[k] for k in all_expected.keys()}
 
     f_scores = {
-        k: None if precision[k] == 0 else (0 if recall[k] == 0 else (2*precision[k]*recall[k]/(precision[k]+recall[k])))
+        k: None if precision[k] == 0 else (
+            0 if recall[k] == 0 else (2 * precision[k] * recall[k] / (precision[k] + recall[k])))
         for k in precision
     }
 
@@ -124,23 +112,26 @@ def get_metrics(output, target):
             overall_all_expected += all_expected[k]
     overall_precision = (overall_true_predicted / overall_all_predicted if overall_all_predicted > 0 else 0)
     overall_recall = (overall_true_predicted / overall_all_expected if overall_all_expected > 0 else 0)
-    overall_f_scores = (2*overall_precision*overall_recall/(overall_precision+overall_recall) if overall_recall > 0 else 0)
+    overall_f_scores = (
+        2 * overall_precision * overall_recall / (overall_precision + overall_recall) if overall_recall > 0 else 0)
 
     return precision, recall, f_scores, (overall_precision, overall_recall, overall_f_scores)
+
 
 def print_metrics(logging, precision, recall, f_scores, overall, label_map):
     # print(f"precision:{precision}")
 
     for k in label_map.keys():
         # print(f"-----------> k:{k} - [{label_map[k]}]")
-        logging.info(f"{label_map[k]}: \tPrec [{precision[k]:.3f}], " + 
-                    (f"\tRec [{recall[k]:.3f}], " if k in recall else "\tRec [None], ") +
-                    (f"\tF1 [{f_scores[k]:.3f}], " if f_scores[k] != None else "\tF1 [None], ") 
-                )  
+        logging.info(f"{label_map[k]}: \tPrec [{precision.get(k, 0):.3f}], " +
+                     (f"\tRec [{recall[k]:.3f}], " if k in recall else "\tRec [None], ") +
+                     (f"\tF1 [{f_scores[k]:.3f}], " if f_scores.get(k) != None else "\tF1 [None], ")
+                     )
     logging.info(f"Overall: \tPrec [{overall[0]:.3f}], " +
                  f"\tRec [{overall[1]:.3f}], " +
                  f"\tF1 [{overall[2]:.3f}], "
-            )
+                 )
+
 
 @torch.no_grad()
 def main():
@@ -154,11 +145,11 @@ def main():
     random.seed(42)
     torch.manual_seed(42)
 
-    setup_logger(f"{params.exp_dir}/log-decode")
+    setup_logger(f"{params.exp_dir}/log-decode", use_console=False)
     logging.info("Decoding started")
 
     device = torch.device("cpu")
-    rank = 0 # hardcode 0 to use single GPU firstly
+    rank = 0  # hardcode 0 to use single GPU firstly
     if torch.cuda.is_available():
         device = torch.device("cuda", rank)
     logging.info(f"Device: {device}")
@@ -172,13 +163,13 @@ def main():
 
     logging.info("About to create model")
     model = get_model(params)
-    print(model)  
+    print(model)
 
     num_param = sum([p.numel() for p in model.parameters()])
     logging.info(f"Number of model parameters: {num_param}")
 
     if params.epoch > 0:
-        ptfile = f"{params.exp_dir}/epoch-{params.epoch-1}.pt"
+        ptfile = f"{params.exp_dir}/epoch-{params.epoch - 1}.pt"
     if params.batch > 0:
         ptfile = f"{params.exp_dir}/checkpoint-{params.batch}.pt"
     logging.info(f"Loading checkpoint from {ptfile}")
@@ -190,14 +181,20 @@ def main():
     model.eval()
 
     data_module = DataModule(args, sp)
-    decode_dl, test_file = data_module.test_dataloader()
-    logging.info(f"test_file:{test_file}, len(decode_dl):{len(decode_dl)}")
+    decode_dl = data_module.test_dataloader()
+    logging.info(f"len(decode_dl):{len(decode_dl)}")
+
+    all_case_pred = []
+    all_case_labels = []
+
+    all_punct_pred = []
+    all_punct_labels = []
 
     for batch_idx, batch in enumerate(tqdm(decode_dl)):
         batch = tuple(t.to(device) for t in batch)
         token_ids, label_ids, valid_ids, label_lens, label_masks = batch
 
-        active_case_logits, active_punct_logits, mask = model(token_ids, valid_ids=valid_ids, label_lens=label_lens) 
+        active_case_logits, active_punct_logits, mask = model(token_ids, valid_ids=valid_ids, label_lens=label_lens)
 
         label_lens, indx = torch.sort(label_lens, dim=0, descending=True, stable=True)
         label_ids = label_ids[indx]
@@ -209,14 +206,35 @@ def main():
         active_case_labels = label_ids[:, 0, :][mask]
         active_punct_labels = label_ids[:, 1, :][mask]
 
-        precision_case, recall_case, f_scores_case, overall_case = get_metrics(case_pred.detach().cpu().numpy(), active_case_labels.detach().cpu().numpy())
-        precision_punct, recall_punct, f_scores_punct, overall_punct = get_metrics(punct_pred.detach().cpu().numpy(), active_punct_labels.detach().cpu().numpy())
+        all_case_pred.extend(case_pred.detach().cpu().tolist())
+        all_case_labels.extend(active_case_labels.detach().cpu().tolist())
+        all_punct_pred.extend(punct_pred.detach().cpu().tolist())
+        all_punct_labels.extend(active_punct_labels.detach().cpu().tolist())
 
-        logging.info("\nCase metrics:\n----------------------------------------------------------------------------------------")
-        print_metrics(logging, precision_case, recall_case, f_scores_case, overall_case, case_id)
-        logging.info("\nPunct metrics:\n=======================================================================================")
-        print_metrics(logging, precision_punct, recall_punct, f_scores_punct, overall_punct, punct_id)
+    total_precision_case, total_recall_case, total_f_scores_case, total_overall_case = get_metrics(
+        all_case_pred, all_case_labels
+    )
+    total_precision_punct, total_recall_punct, total_f_scores_punct, total_overall_punct = get_metrics(
+        all_punct_pred, all_punct_labels
+    )
+
+    logging.info(
+        "\nCase metrics:\n----------------------------------------------------------------------------------------")
+    print_metrics(logging, total_precision_case, total_recall_case, total_f_scores_case, total_overall_case,
+                  CASE_ID_MAP)
+    logging.info(
+        "\nPunct metrics:\n=======================================================================================")
+    print_metrics(logging, total_precision_punct, total_recall_punct, total_f_scores_punct, total_overall_punct,
+                  PUNCTUATION_ID_MAP)
 
 
 if __name__ == "__main__":
+    formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    logging.basicConfig(
+        format=formatter,
+        level=getattr(logging, os.environ.get("LOGLEVEL", "WARNING").upper(), logging.WARNING),
+    )
+
+    logging.info("Starting")
     main()
+    logging.info("Done")

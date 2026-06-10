@@ -49,7 +49,7 @@ def main():
     logging.info(f"Training BPE model with vocab size {args.vocab_size} on {args.input}")
     input_sentence_size = 100000000
     character_coverage = 1.0
-    user_defined_symbols = ["<blk>", "<sos/eos>"]
+    user_defined_symbols = ["<blk>", "<s>", "</s>"]
     unk_id = len(user_defined_symbols)
     model_type = "unigram"
 

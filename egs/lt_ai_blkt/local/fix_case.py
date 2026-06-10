@@ -58,7 +58,7 @@ def fix_case(w, i):
             w.word = w.word.title()
         else:
             w.word = w.word.lower()
-        logging.info(f"Fix case {old}->{w.word}")
+        # logging.info(f"Fix case {old}->{w.word}")
 
 
 def main():

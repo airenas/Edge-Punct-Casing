@@ -35,11 +35,24 @@ def mixed_upper(s):
     return False
 
 
+UPPER = 1
+LOWER = 0
+CAP = 2
+MIX_CASE = 3
+
+
 def get_case_id(s: str):
     if first_upper(s):
-        return 1
+        return CAP
     elif all_upper(s):
-        return 2
+        return UPPER
     elif mixed_upper(s):
-        return 3
-    return 0
+        return MIX_CASE
+    return LOWER
+
+
+CASE_ID_MAP = {LOWER: "LOWER",
+               UPPER: "UPPER",
+               CAP: "CAP",
+               MIX_CASE: "MIX_CASE",
+               }
