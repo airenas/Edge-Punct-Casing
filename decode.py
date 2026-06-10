@@ -194,9 +194,9 @@ def main():
         batch = tuple(t.to(device) for t in batch)
         token_ids, label_ids, valid_ids, label_lens, label_masks = batch
 
-        active_case_logits, active_punct_logits, mask = model(token_ids, valid_ids=valid_ids, label_lens=label_lens)
+        active_case_logits, active_punct_logits, mask, indx = model(token_ids, valid_ids=valid_ids, label_lens=label_lens)
 
-        label_lens, indx = torch.sort(label_lens, dim=0, descending=True, stable=True)
+        # label_lens, indx = torch.sort(label_lens, dim=0, descending=True, stable=True)
         label_ids = label_ids[indx]
 
         case_pred = torch.argmax(F.log_softmax(active_case_logits, dim=1), dim=1)

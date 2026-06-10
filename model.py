@@ -217,6 +217,6 @@ class Model_new(nn.Module):
 			# case_pred = torch.argmax(active_case_logits, dim=1)
 			# punct_pred = torch.argmax(active_punct_logits, dim=1)	
 
-			return active_case_logits, active_punct_logits, final_mask
+			return active_case_logits, active_punct_logits, final_mask, indx
 
 
