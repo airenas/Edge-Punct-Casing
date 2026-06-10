@@ -64,8 +64,12 @@ $(data_dir)/texts/lower.txt: $(data_dir)/texts/train.txt
 	mv $@_ $@
 $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model: $(data_dir)/texts/lower.txt | $(data_dir)/lang_bpe_$(bpe_vocab_size)
 	$(python_cmd) ./local/sentence_piece.py --input $(data_dir)/texts/lower.txt --vocab_size $(bpe_vocab_size) --output_dir $(data_dir)/lang_bpe_$(bpe_vocab_size)
+$(data_dir)/texts/%_features.txt: $(data_dir)/texts/%.txt $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model
+	$(python_cmd) ./local/make_features.py --input $(data_dir)/texts/$*.txt --output $@_ --bpe_model $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model	
+	mv $@_ $@
 ###################################################################
-prepare/data: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model
+prepare/data: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
+	$(data_dir)/texts/train_features.txt $(data_dir)/texts/dev_features.txt $(data_dir)/texts/test_features.txt
 .PHONY: prepare/data
 ###################################################################
 train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train.txt | $(exp_dir)
