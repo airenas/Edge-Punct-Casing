@@ -5,6 +5,7 @@ import os
 
 from tqdm import tqdm
 
+from egs.lt_ai_blkt.local.parquet_utils import count_rows, ParquetKeeper, iter_text_rows
 from egs.lt_ai_blkt.local.punctuation import PUNCTUATION
 from egs.lt_ai_blkt.local.utils import Word, split_word_punctuation
 
@@ -89,22 +90,21 @@ def main():
 
     logging.info(f"Output file: {args.output}")
     ok, skip = 0, 0
-    with open(args.output, "w", encoding="utf-8") as f_out:
-        total = os.path.getsize(args.input)
-        with open(args.input, "r", encoding="utf-8") as f:
-            with tqdm(total=total, unit="B", unit_scale=True, desc="Filtering") as pbar:
-                for line in f:
-                    mc = len(line)
-                    line = line.rstrip("\n")
-                    strs = line.split()
-                    words = [Word(s) for s in strs]
-                    if is_ok(words):
-                        ok += 1
-                        ws = " ".join(w.word for w in words)
-                        f_out.write(ws + "\n")
-                    else:
-                        skip += 1
-                    pbar.update(mc)
+
+    total = count_rows(args.input)
+    with tqdm(total=total, unit="rows", desc="Filtering") as pbar:
+        with ParquetKeeper(output_dir=args.output) as keeper:
+            for line in iter_text_rows(args.input, keeper.text_field):
+                line = line.rstrip("\n")
+                strs = line.split()
+                words = [Word(s) for s in strs]
+                if is_ok(words):
+                    ok += 1
+                    ws = " ".join(w.word for w in words)
+                    keeper.feed_text(ws)
+                else:
+                    skip += 1
+                pbar.update(1)
     logging.info(f"Kept {ok} lines, skipped {skip} lines")
 
 

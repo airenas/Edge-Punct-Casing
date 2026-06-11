@@ -5,6 +5,8 @@ import os
 
 from tqdm import tqdm
 
+from egs.lt_ai_blkt.local.dwn import ParquetKeeper
+from egs.lt_ai_blkt.local.parquet_utils import count_rows, iter_text_rows
 from egs.lt_ai_blkt.local.utils import several_upper, Word
 
 
@@ -13,13 +15,22 @@ def get_args():
     parser.add_argument(
         "--input",
         type=str,
-        help="""Input text file.
+        required=True,
+        help="""Input parquet file or directory with parquet shards.
+        """,
+    )
+    parser.add_argument(
+        "--text-field",
+        type=str,
+        default="text",
+        help="""Input parquet column that contains text (also used for output).
         """,
     )
     parser.add_argument(
         "--output",
         type=str,
-        help="""Output file
+        required=True,
+        help="""Output parquet path (file name prefix or .parquet file name).
             """,
     )
     return parser.parse_args()
@@ -66,22 +77,23 @@ def main():
 
     logging.info(f"fix casing {args.input}")
 
-    logging.info(f"Output file: {args.output}")
-    with open(args.output, "w", encoding="utf-8") as f_out:
-        total = os.path.getsize(args.input)
-        with open(args.input, "r", encoding="utf-8") as f:
-            with tqdm(total=total, unit="B", unit_scale=True, desc="Fix casing") as pbar:
-                for line in f:
-                    mc = len(line)
-                    line = line.rstrip("\n")
-                    strs = line.split()
-                    words = [Word(s) for s in strs]
-                    for i, w in enumerate(words):
-                        fix_case(w, i)
-                    ws = " ".join(w.to_str() for w in words)
-                    f_out.write(ws + "\n")
-                    pbar.update(mc)
-        logging.info("Done")
+    logging.info(f"Output parquet: {args.output}")
+
+    total = count_rows(args.input)
+    wrote = 0
+    with tqdm(total=total, unit="rows", desc="Fix casing") as pbar:
+        with ParquetKeeper(output_dir=args.output, text_field=args.text_field) as keeper:
+            for line in iter_text_rows(args.input, args.text_field):
+                strs = line.split()
+                words = [Word(s) for s in strs]
+                for i, w in enumerate(words):
+                    fix_case(w, i)
+                ws = " ".join(w.to_str() for w in words)
+                if keeper.feed_text(ws):
+                    wrote += 1
+                pbar.update(1)
+
+    logging.info("Done, wrote %d rows", wrote)
 
 
 if __name__ == "__main__":

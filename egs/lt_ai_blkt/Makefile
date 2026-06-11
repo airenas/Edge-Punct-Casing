@@ -47,7 +47,7 @@ $(corpus_dir)/.sentences: $(corpus_dir)/.dwn
 		--checkpoint-every 10 --state-file $(corpus_dir)/.tagger_state.json
 	touch $@
 $(corpus_dir)/.sentences_c: $(corpus_dir)/.sentences
-	$(python_cmd) ./local/fix_case.py --input$(corpus_dir)/sentences --output $(corpus_dir)/sentences_c
+	$(python_cmd) ./local/fix_case.py --input $(corpus_dir)/sentences --output $(corpus_dir)/sentences_c
 	touch $@
 $(corpus_dir)/.cleaned: $(corpus_dir)/.sentences_c
 	$(python_cmd) ./local/clean.py --input $(corpus_dir)/sentences_c --output $(corpus_dir)/cleaned
@@ -61,8 +61,8 @@ prepare/corpus: $(corpus_dir)/.cleaned
 ###################################################################
 ###################################################################
 ###################################################################
-$(data_dir)/texts/train.txt $(data_dir)/texts/dev.txt $(data_dir)/texts/test.txt: $(corpus_dir)/cleaned.txt | $(data_dir)/texts
-	$(python_cmd) ./local/split.py --input $^ --output-dir $(data_dir)/texts
+$(data_dir)/texts/train.txt $(data_dir)/texts/dev.txt $(data_dir)/texts/test.txt: $(corpus_dir)/.cleaned | $(data_dir)/texts
+	$(python_cmd) ./local/split.py --input $(corpus_dir)/cleaned --output-dir $(data_dir)/texts
 $(data_dir)/texts/lower.txt: $(data_dir)/texts/train.txt 
 	$(python_cmd) ./local/lower.py --input $^ --output $@_
 	mv $@_ $@

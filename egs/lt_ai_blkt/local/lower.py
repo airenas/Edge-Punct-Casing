@@ -28,13 +28,13 @@ def get_args():
 def main():
     args = get_args()
 
-    logging.info(f"fix casing {args.input}")
+    logging.info(f"to lowercase {args.input}")
 
     logging.info(f"Output file: {args.output}")
     with open(args.output, "w", encoding="utf-8") as f_out:
         total = os.path.getsize(args.input)
         with open(args.input, "r", encoding="utf-8") as f:
-            with tqdm(total=total, unit="B", unit_scale=True, desc="Fix casing") as pbar:
+            with tqdm(total=total, unit="B", unit_scale=True, desc="To lowercase") as pbar:
                 for line in f:
                     mc = len(line)
                     line = line.rstrip("\n")
