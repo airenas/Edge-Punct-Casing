@@ -38,23 +38,25 @@ info:
 $(data_dir) $(corpus_dir) $(data_dir)/texts $(data_dir)/lang_bpe_$(bpe_vocab_size) \
 	$(exp_dir):
 	mkdir -p $@
-$(corpus_dir)/data.txt: | $(corpus_dir)
-	$(python_cmd) ./local/dwn.py --dataset $(hf_dataset) --text-field $(hf_text_field) --output $(corpus_dir)/data.txt \
+$(corpus_dir)/.dwn: | $(corpus_dir)
+	$(python_cmd) ./local/dwn.py --dataset $(hf_dataset) --text-field $(hf_text_field) --output $(corpus_dir)/data \
 	 	--limit $(limit) 
-$(corpus_dir)/sentences.txt: $(corpus_dir)/data.txt 
-	$(python_cmd) ./local/tagger.py --input $^ --output $@_ --tagger-url $(tagger_url)
-	mv $@_ $@
-$(corpus_dir)/sentences_c.txt: $(corpus_dir)/sentences.txt 
-	$(python_cmd) ./local/fix_case.py --input $^ --output $@_
-	mv $@_ $@
-$(corpus_dir)/cleaned.txt: $(corpus_dir)/sentences_c.txt
-	$(python_cmd) ./local/clean.py --input $^ --output $@_
-	mv $@_ $@
+	touch $@
+$(corpus_dir)/.sentences: $(corpus_dir)/.dwn 
+	$(python_cmd) ./local/tagger.py --input $(corpus_dir)/data --output $(corpus_dir)/sentences --tagger-url $(tagger_url) \
+		--checkpoint-every 10 --state-file $(corpus_dir)/.tagger_state.json
+	touch $@
+$(corpus_dir)/.sentences_c: $(corpus_dir)/.sentences
+	$(python_cmd) ./local/fix_case.py --input$(corpus_dir)/sentences --output $(corpus_dir)/sentences_c
+	touch $@
+$(corpus_dir)/.cleaned: $(corpus_dir)/.sentences_c
+	$(python_cmd) ./local/clean.py --input $(corpus_dir)/sentences_c --output $(corpus_dir)/cleaned
+	touch $@
 ###################################################################
 start/tagger:
 	docker compose up -d
 ###################################################################
-prepare/corpus: $(corpus_dir)/cleaned.txt
+prepare/corpus: $(corpus_dir)/.cleaned
 .PHONY: prepare/corpus
 ###################################################################
 ###################################################################

@@ -17,7 +17,7 @@ services:
     environment:
       - SEGMENTATION_URL=http://lex:8080/
       - RUST_LOG=DEBUG,tracing=ERROR,ml_tagger::processors::lemmatize_words=INFO,hyper_util::client::legacy::pool=INFO,ml_tagger::processors::embedding=INFO
-      - ONNX_THREADS=4
+      - ONNX_THREADS=8
       - DATA_DIR=/data
       - EMBEDDINGS_FILE=mmap:/data/delfi_cbow.150.fifu
       - ONNX_FILE=/data/model.onnx
