@@ -77,9 +77,8 @@ def is_ok(words: List[Word]):
         first = words[0].word
         if len(first) > 0 and first[0].islower():
             return False
-        last = words[-1].word
-        _, p = split_word_punctuation(last)
-        if p == "":
+        last = words[-1]
+        if last.punct == "":
             return False
     return True
 
@@ -147,11 +146,12 @@ def main():
                 words = fix_symbols(words)
                 if is_ok(words):
                     ok += 1
-                    ws = " ".join(w.word for w in words)
+                    ws = " ".join(w.word + w.punct for w in words)
                     keeper.feed_text(ws)
                 else:
                     skip += 1
                 pbar.update(1)
+                pbar.set_postfix(ok=ok, skip=skip)
     logging.info(f"Kept {ok} lines, skipped {skip} lines")
 
 

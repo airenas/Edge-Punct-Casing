@@ -17,6 +17,10 @@ class Test(TestCase):
         self.assertEqual(w, "olia")
         self.assertEqual(p, "...a")
 
+        w, p = split_word_punctuation("19.")
+        self.assertEqual(w, "19")
+        self.assertEqual(p, ".")
+
         w, p = split_word_punctuation(",")
         self.assertEqual(w, "")
         self.assertEqual(p, ",")
@@ -52,6 +56,10 @@ class TestWord(TestCase):
 
         w = Word("-")
         self.assertEqual(w.word, "")
+        self.assertEqual(w.punct, "-")
+
+        w = Word("a19-")
+        self.assertEqual(w.word, "a19")
         self.assertEqual(w.punct, "-")
 
     def test_to_str(self):

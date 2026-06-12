@@ -19,9 +19,9 @@ class Word:
             if len(strs_mi) == 2:
                 self.mi = strs_mi[0]
                 self.word, self.punct = split_word_punctuation(self.word + strs_mi[1]) # add punctuation to word
-        else:
-            self.word, self.punct = split_word_punctuation(string)
-            self.mi = ""
+                return
+        self.word, self.punct = split_word_punctuation(string)
+        self.mi = ""
 
     def to_str(self):
         if self.mi:
@@ -33,7 +33,7 @@ class Word:
 def split_word_punctuation(word):
     w = ""
     for c in word:
-        if c.isalpha():
+        if c.isalpha() or c.isdigit():
             w += c
         else:
             return w, word[len(w):]

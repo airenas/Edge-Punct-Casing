@@ -98,6 +98,8 @@ class ParquetKeeper:
 
         if len(self._buffer) >= self._batch_size:
             self._flush()
+            if self._should_close_shard():
+                self._close_current_shard()
 
         return True
 
