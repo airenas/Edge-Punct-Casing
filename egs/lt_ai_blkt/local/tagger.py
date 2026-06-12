@@ -138,7 +138,7 @@ class Data:
                 if has_upper(s):
                     s = s + f"(={w.get('mi', '')})"
                 elif mi == "Dl" or mi == "De":
-                    logging.info(f"Got word: '{w}'")
+                    logging.debug(f"Got word: '{w}'")
                     s = s + f"(={mi})"
             elif tp == "SEPARATOR":
                 s = s.replace("\n", " ")
