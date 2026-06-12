@@ -456,8 +456,8 @@ def main():
         sentence_queue.join()
         writer_thread.join()
         with progress_lock:
-            final_sc = progress["sc"]
-            final_wc = progress["wc"]
+            final_sc = progress.sentences
+            final_wc = progress.words
         logging.info("Writer totals: sentences=%d words=%d", final_sc, final_wc)
         if run_error is None:
             try:
