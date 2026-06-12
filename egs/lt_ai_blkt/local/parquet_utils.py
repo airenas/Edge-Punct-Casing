@@ -24,9 +24,13 @@ class ParquetKeeper:
 
         self._writer = None
         self._current_shard_file = None
+        self._current_tmp_file = None
         self._rows_in_current_shard = 0
         self._shard_idx = 0
         self.rows_written = 0
+
+        self._buffer = []
+        self._batch_size = 5000
 
     @property
     def shard_count(self) -> int:
@@ -35,22 +39,27 @@ class ParquetKeeper:
     def _shard_file(self, shard_idx: int) -> Path:
         return self.output_dir / f"{self.base_name}-{shard_idx:05d}.parquet"
 
+    def _tmp_shard_file(self, shard_idx: int) -> Path:
+        return self.output_dir / f"{self.base_name}-{shard_idx:05d}.parquet.inprogress"
+
     def _open_current_shard(self):
         """Open a ParquetWriter for the current shard index."""
         shard_file = self._shard_file(self._shard_idx)
+        tmp_file = self._tmp_shard_file(self._shard_idx)
         schema = pa.schema([(self.text_field, pa.string())])
         self._writer = pq.ParquetWriter(
-            str(shard_file),
+            str(tmp_file),
             schema,
             compression=self.compression,
         )
         self._current_shard_file = shard_file
+        self._current_tmp_file = tmp_file
         logging.info("Opened shard %d for writing: %s", self._shard_idx, shard_file)
 
     def _get_current_file_size(self) -> int:
         """Get the current shard file size in bytes."""
-        if self._current_shard_file and self._current_shard_file.exists():
-            return self._current_shard_file.stat().st_size
+        if self._current_tmp_file and self._current_tmp_file.exists():
+            return self._current_tmp_file.stat().st_size
         return 0
 
     def _should_close_shard(self) -> bool:
@@ -62,7 +71,10 @@ class ParquetKeeper:
     def _close_current_shard(self):
         """Close the current ParquetWriter and move to next shard."""
         if self._writer:
+            self._flush()
             self._writer.close()
+            if self._current_tmp_file and self._current_shard_file:
+                self._current_tmp_file.replace(self._current_shard_file)
             logging.info(
                 "Closed shard %d with %d rows: %s",
                 self._shard_idx,
@@ -72,31 +84,40 @@ class ParquetKeeper:
             self._writer = None
             self._shard_idx += 1
             self._rows_in_current_shard = 0
+            self._current_tmp_file = None
             self._current_shard_file = None
 
     def feed_text(self, text: str) -> bool:
-        """Feed a single text string to the writer (writes to current or new shard)."""
         if not isinstance(text, str):
             return False
 
-        # Open first shard if needed
         if self._writer is None:
             self._open_current_shard()
 
-        # Write single row as a table
-        table = pa.Table.from_arrays(
-            [pa.array([text], type=pa.string())],
-            names=[self.text_field],
-        )
-        self._writer.write_table(table)
-        self._rows_in_current_shard += 1
-        self.rows_written += 1
+        self._buffer.append(text)
 
-        # Close shard and open next if size/row limit reached
-        if self._should_close_shard():
-            self._close_current_shard()
+        if len(self._buffer) >= self._batch_size:
+            self._flush()
 
         return True
+
+    def _flush(self):
+        if not self._buffer:
+            return
+
+        table = pa.Table.from_arrays(
+            [pa.array(self._buffer, type=pa.string())],
+            names=[self.text_field],
+        )
+
+        self._writer.write_table(table)
+
+        n = len(self._buffer)
+        self._rows_in_current_shard += n
+        self.rows_written += n
+
+        self._buffer.clear()
+
 
     def restore_shard_index(self, shard_idx: int):
         """Restore shard counter to continue from next shard (e.g., on resumption)."""

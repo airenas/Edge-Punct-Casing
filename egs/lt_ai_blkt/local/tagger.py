@@ -3,15 +3,19 @@ import argparse
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime
+from queue import Empty, Queue
+from threading import Event, Lock, Thread
 from typing import List
 
-import pyarrow.parquet as pq
 import requests
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
+from urllib3.util.retry import Retry
 
 from egs.lt_ai_blkt.local.dwn import ParquetKeeper
+from egs.lt_ai_blkt.local.parquet_utils import count_rows, iter_text_rows
 from egs.lt_ai_blkt.local.utils import has_upper
 
 
@@ -34,8 +38,9 @@ def get_args():
     parser.add_argument(
         "--tagger-url",
         type=str,
+        action="append",
         required=True,
-        help="""Tagger URL.
+        help="""Tagger URL. Can be provided multiple times and/or as a comma-separated list.
         """,
     )
     parser.add_argument(
@@ -44,14 +49,6 @@ def get_args():
         required=True,
         help="""Output parquet path (file name prefix or .parquet file name).
             """,
-    )
-    parser.add_argument(
-        "--compression",
-        type=str,
-        default="zstd",
-        choices=["zstd", "snappy", "gzip", "brotli", "lz4", "none"],
-        help="""Parquet compression codec (default: zstd).
-        """,
     )
     parser.add_argument(
         "--shard-size-mb",
@@ -68,22 +65,45 @@ def get_args():
         """,
     )
     parser.add_argument(
-        "--restart",
-        action="store_true",
-        help="""Restart conversion from scratch (clear prior output shards and state).
-        """,
-    )
-    parser.add_argument(
         "--checkpoint-every",
         type=int,
         default=100,
         help="""How many input rows between state checkpoints (default: 100).
         """,
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.tagger_url = _parse_tagger_urls(args.tagger_url)
+    return args
+
+
+def _parse_tagger_urls(values: List[str]) -> List[str]:
+    urls: List[str] = []
+    for value in values:
+        parts = [part.strip() for part in value.split(",")]
+        urls.extend([part for part in parts if part])
+    if not urls:
+        raise ValueError("No valid --tagger-url values provided")
+    return urls
 
 
 MAX_CHARS = 10000
+
+
+def _make_http_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 class Data:
@@ -114,7 +134,7 @@ class Data:
             if tp == "WORD":
                 mi = w.get("mi", "")
                 if has_upper(s):
-                    s = s + f"(={w.get("mi", "")})"
+                    s = s + f"(={w.get('mi', '')})"
                 elif mi == "Dl" or mi == "De":
                     logging.info(f"Got word: '{w}'")
                     s = s + f"(={mi})"
@@ -133,75 +153,61 @@ class Data:
         return res
 
 
-def write_out(keeper: ParquetKeeper, sentences) -> int:
+@dataclass
+class Progress:
+    sentences: int = 0
+    words: int = 0
+
+
+class TaggerState:
+    def __init__(
+            self,
+            input_path: str,
+            output_path: str,
+            read_rows: int,
+            sentences_written: int,
+            words_written: int,
+            output_shard_count: int,
+            total_rows: int,
+    ):
+        self.input = input_path
+        self.output = output_path
+        self.read_rows = read_rows
+        self.sentences_written = sentences_written
+        self.words_written = words_written
+        self.output_shard_count = output_shard_count
+        self.total_rows = total_rows
+
+    @staticmethod
+    def from_dict(data: dict) -> "TaggerState":
+        return TaggerState(
+            input_path=data.get("input", ""),
+            output_path=data.get("output", ""),
+            read_rows=data.get("read_rows", 0),
+            sentences_written=data.get("sentences_written", 0),
+            words_written=data.get("words_written", 0),
+            output_shard_count=data.get("output_shard_count", 0),
+            total_rows=data.get("total_rows", 0),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "input": self.input,
+            "output": self.output,
+            "read_rows": self.read_rows,
+            "sentences_written": self.sentences_written,
+            "words_written": self.words_written,
+            "output_shard_count": self.output_shard_count,
+            "total_rows": self.total_rows,
+        }
+
+
+def write_out(keeper: ParquetKeeper, sentences):
+    wl = 0
     for s in sentences:
+        wl += len(s.split())
         keeper.feed_text(s)
-    return len(sentences)
-
-
-def _resolve_parquet_files(input_path: str) -> List[Path]:
-    path = Path(input_path)
-    if path.is_file():
-        return [path]
-    if path.is_dir():
-        files = sorted(path.glob("*.parquet"))
-        if files:
-            return files
-    raise ValueError(f"No parquet files found in '{input_path}'")
-
-
-def _iter_text_rows(input_path: str, text_field: str):
-    for parquet_file in _resolve_parquet_files(input_path):
-        pf = pq.ParquetFile(parquet_file)
-        schema_names = set(pf.schema_arrow.names)
-        if text_field not in schema_names:
-            raise ValueError(
-                f"Column '{text_field}' not found in {parquet_file}. Available: {', '.join(pf.schema_arrow.names)}"
-            )
-        for batch in pf.iter_batches(columns=[text_field]):
-            for value in batch.column(0).to_pylist():
-                if isinstance(value, str):
-                    yield value
-
-
-def _count_rows(input_path: str) -> int:
-    total = 0
-    for parquet_file in _resolve_parquet_files(input_path):
-        total += pq.ParquetFile(parquet_file).metadata.num_rows
-    return total
-
-
-def _make_keeper(output_path: str, text_field: str, compression: str, shard_size_mb: int) -> ParquetKeeper:
-    output = Path(output_path)
-    if output.suffix == ".parquet":
-        output_dir = output.parent
-        base_name = output.stem
-    else:
-        output_dir = output
-        base_name = "data"
-
-    return ParquetKeeper(
-        output_dir=output_dir,
-        base_name=base_name,
-        text_field=text_field,
-        shard_size_mb=shard_size_mb,
-        compression=compression,
-    )
-
-
-def _resolve_output_parts(output_path: str):
-    output = Path(output_path)
-    if output.suffix == ".parquet":
-        return output.parent, output.stem
-    return output, "data"
-
-
-def _remove_existing_output_shards(output_path: str):
-    output_dir, base_name = _resolve_output_parts(output_path)
-    if not output_dir.exists():
-        return
-    for shard in output_dir.glob(f"{base_name}-*.parquet"):
-        shard.unlink()
+    return len(sentences), wl
 
 
 def _load_state(state_file: str):
@@ -209,21 +215,21 @@ def _load_state(state_file: str):
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return TaggerState.from_dict(json.load(f))
 
 
-def _save_state(state_file: str, state: dict):
+def _save_state(state_file: str, state: TaggerState):
     path = Path(state_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=True, indent=2)
+        json.dump(state.to_dict(), f, ensure_ascii=True, indent=2)
 
 
-def call(url: str, txt):
-    logging.debug(f"Calling tagger with text of length {len(txt)}")
+def call(session: requests.Session, url: str, txt: str):
+    logging.debug(f"Calling tagger {url} with text of length {len(txt)}")
     headers = {"Content-Type": "application/json"}
     try:
-        resp = requests.post(url, data=txt.encode("utf-8"), headers=headers, timeout=30)
+        resp = session.post(url, data=txt.encode("utf-8"), headers=headers, timeout=30)
     except requests.RequestException as err:
         raise RuntimeError(f"failed to send request: {err}") from err
 
@@ -239,11 +245,133 @@ def call(url: str, txt):
     raise RuntimeError(f"Failed to make request: {resp.status_code} {body_str}")
 
 
-def split(url: str, data, is_last):
+def split(session: requests.Session, url: str, data, is_last):
     txt = data.buffer[:MAX_CHARS]
-    res = call(url, txt)
+    res = call(session, url, txt)
     # logging.debug(res)
     return data.take_sentences(res, is_last)
+
+
+def _split_line(session: requests.Session, url: str, line: str) -> List[str]:
+    data = Data()
+    data.append(line)
+    out: List[str] = []
+
+    ll = len(data.buffer)
+    while ll > MAX_CHARS:
+        sentences = split(session, url, data, False)
+        out.extend(sentences)
+        if ll == len(data.buffer):
+            logging.warning(
+                "Buffer length did not decrease in worker, dropping remaining chunk to avoid infinite loop"
+            )
+            data.buffer = ""
+            break
+        ll = len(data.buffer)
+
+    if data.buffer:
+        out.extend(split(session, url, data, True))
+
+    return out
+
+
+def _worker_loop(
+        worker_name: str,
+        url: str,
+        line_queue: Queue,
+        sentence_queue: Queue,
+        stop_event: Event,
+        error_queue: Queue,
+):
+    session = _make_http_session()
+    while True:
+        item = line_queue.get()
+        try:
+            if item is None:
+                break
+            if stop_event.is_set():
+                continue
+            idx, line = item
+            sentences = _split_line(session, url, line)
+            sentence_queue.put((idx, sentences, None))
+        except Exception as err:
+            stop_event.set()
+            error_queue.put(RuntimeError(f"{worker_name} failed: {err}"))
+        finally:
+            line_queue.task_done()
+    logging.info(f"{worker_name}) exiting")
+
+
+def _start_workers(
+        urls: List[str],
+        line_queue: Queue,
+        sentence_queue: Queue,
+        stop_event: Event,
+        error_queue: Queue,
+) -> List[Thread]:
+    threads: List[Thread] = []
+    for i, url in enumerate(urls):
+        name = f"tagger-worker-{i + 1}"
+        th = Thread(
+            target=_worker_loop,
+            args=(name, url, line_queue, sentence_queue, stop_event, error_queue),
+            name=name,
+            daemon=False,
+        )
+        th.start()
+        threads.append(th)
+    return threads
+
+
+def _writer_loop(args, sentence_queue: Queue, state: TaggerState, stop_event: Event, error_queue: Queue, progress: Progress,
+                 progress_lock: Lock):
+    try:
+        with (ParquetKeeper(output_dir=Path(args.output)) as keeper):
+            last_idx, sc, wc = 0, state.sentences_written, state.words_written
+            if state.sentences_written > 0:
+                keeper.restore_shard_index(state.output_shard_count)
+            while True:
+                item = sentence_queue.get()
+                try:
+                    if item is None:
+                        break
+                    idx, sentences, err = item
+                    if err:
+                        raise RuntimeError(f"Worker error: {err}")
+                    sl, wl = write_out(keeper, sentences)
+                    sc += sl
+                    wc += wl
+                    with progress_lock:
+                        progress.sentences = sc
+                        progress.words = wc
+                    last_idx = idx
+                    if idx % args.checkpoint_every == 0:
+                        state.read_rows = last_idx
+                        state.sentences_written = sc
+                        state.words_written = wc
+                        state.output_shard_count = keeper.shard_count
+                        _save_state(args.state_file, state)
+                finally:
+                    sentence_queue.task_done()
+            state.read_rows = last_idx
+            state.sentences_written = sc
+            state.words_written = wc
+            state.output_shard_count = keeper.shard_count
+            _save_state(args.state_file, state)
+            with progress_lock:
+                progress.sentences = sc
+                progress.words = wc
+    except Exception as err:  # noqa: BLE001
+        stop_event.set()
+        error_queue.put(RuntimeError(f"tagger-writer failed: {err}"))
+
+
+def _stop_workers(line_queue: Queue, threads: List[Thread]):
+    for _ in threads:
+        line_queue.put(None)
+    line_queue.join()
+    for th in threads:
+        th.join(timeout=5)
 
 
 def main():
@@ -251,139 +379,94 @@ def main():
     if args.checkpoint_every <= 0:
         raise ValueError("--checkpoint-every must be > 0")
 
-    previous_state = _load_state(args.state_file)
-    if previous_state:
+    workers = len(args.tagger_url)
+    logging.info(f"Using {workers} tagger URLs")
+
+    total_rows = count_rows(args.input)
+    state = _load_state(args.state_file)
+    if state:
         logging.info("Last conversion state found: %s", args.state_file)
-        logging.info(
-            "Last conversion: status=%s input=%s output=%s finished_at=%s",
-            previous_state.get("status", "unknown"),
-            previous_state.get("input", ""),
-            previous_state.get("output", ""),
-            previous_state.get("finished_at", ""),
+    else:
+        logging.info("No previous conversion state found at %s", args.state_file)
+        state = TaggerState(
+            input_path=args.input,
+            output_path=args.output,
+            read_rows=0,
+            sentences_written=0,
+            words_written=0,
+            output_shard_count=0,
+            total_rows=total_rows,
         )
 
-    if args.restart:
-        logging.info("Restart requested, removing previous output shards and resetting state")
-        _remove_existing_output_shards(args.output)
-        state_path = Path(args.state_file)
-        if state_path.exists():
-            state_path.unlink()
-
     logging.info(f"Tagging parquet text from {args.input}")
-
-    data = Data()
-    wrote = 0
-
     logging.info(f"Output parquet: {args.output}")
-    keeper = _make_keeper(
-        output_path=args.output,
-        text_field=args.text_field,
-        compression=args.compression,
-        shard_size_mb=args.shard_size_mb,
+
+    stop_event = Event()
+    error_queue: Queue = Queue()
+    progress = Progress()
+    progress_lock = Lock()
+
+    line_queue: Queue = Queue(maxsize=workers)
+    sentence_queue: Queue = Queue(maxsize=workers)
+    worker_threads = _start_workers(args.tagger_url, line_queue, sentence_queue, stop_event, error_queue)
+    logging.info("Started %d workers with queues", len(worker_threads))
+
+    resume_from_row = state.read_rows
+
+    writer_thread = Thread(
+        target=_writer_loop,
+        args=(
+            args,
+            sentence_queue,
+            state,
+            stop_event,
+            error_queue,
+            progress,
+            progress_lock,
+        ),
+        name="tagger-writer",
+        daemon=False,
     )
-
-    sc, wc = 0, 0
-    total_rows = _count_rows(args.input)
-    started_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    state = {
-        "status": "running",
-        "started_at": started_at,
-        "finished_at": "",
-        "input": args.input,
-        "output": args.output,
-        "text_field": args.text_field,
-        "processed_rows": 0,
-        "read_rows": 0,
-        "sentences_written": 0,
-        "words_written": 0,
-        "output_shard_count": 0,
-        "total_rows": total_rows,
-    }
-    _save_state(args.state_file, state)
-
-    resume_from_row = 0
-    resume_shard_idx = 0
-    if previous_state and previous_state.get("status") == "running" and not args.restart:
-        resume_from_row = previous_state.get("processed_rows", 0)
-        resume_shard_idx = previous_state.get("output_shard_count", 0)
-        logging.info("Resuming from input row %d, output shard %d", resume_from_row, resume_shard_idx)
-        if resume_from_row > 0:
-            keeper.restore_shard_index(resume_shard_idx)
-
-    last_idx = 0
+    writer_thread.start()
+    run_error = None
     try:
         with tqdm(total=total_rows, unit="rows", desc="Tagging rows") as pbar:
-            for idx, line in enumerate(_iter_text_rows(args.input, args.text_field), start=1):
-                if idx <= resume_from_row:
-                    pbar.update(1)
-                    continue
-
-                last_idx = idx
-                data.append(line)
-
-                ll = len(data.buffer)
-                while ll > MAX_CHARS:
-                    sentences = split(args.tagger_url, data, False)
-                    sc += len(sentences)
-                    wc += sum(len(s.split()) for s in sentences)
-                    wrote += write_out(keeper, sentences)
-                    pbar.set_postfix(sentences=sc, words=wc)
-                    if ll == len(data.buffer):
-                        logging.warning(
-                            f"Buffer length did not decrease after splitting, breaking to avoid infinite loop. Buffer content: '{data.buffer[:100]}'"
-                        )
-                        data.buffer = ""
-                    ll = len(data.buffer)
-
+            for idx, line in enumerate(iter_text_rows(args.input, args.text_field)):
                 pbar.update(1)
-                pbar.set_postfix(sentences=sc, words=wc)
-                if idx % args.checkpoint_every == 0:
-                    state["processed_rows"] = idx
-                    state["output_shard_count"] = keeper.shard_count
-                    state["read_rows"] = data.read_lines
-                    state["sentences_written"] = wrote
-                    state["words_written"] = wc
-                    _save_state(args.state_file, state)
+                if stop_event.is_set():
+                    try:
+                        thread_err = error_queue.get_nowait()
+                        raise thread_err
+                    except Empty:
+                        pass
+                    raise RuntimeError("Stopping due to worker/writer error")
+                if idx <= resume_from_row:
+                    continue
+                line_queue.put((idx, line))
+                with progress_lock:
+                    pbar.set_postfix(sentences=progress.sentences, words=progress.words)
+    except Exception as err:  # noqa: BLE001
+        run_error = err
+        stop_event.set()
+    finally:
+        logging.info("Stopping workers. please wait or parquet files may be left in inconsistent state...")
+        _stop_workers(line_queue, worker_threads)
+        logging.info("Stopping writer. please wait or parquet files may be left in inconsistent state...")
+        sentence_queue.put(None)
+        sentence_queue.join()
+        writer_thread.join()
+        with progress_lock:
+            final_sc = progress["sc"]
+            final_wc = progress["wc"]
+        logging.info("Writer totals: sentences=%d words=%d", final_sc, final_wc)
+        if run_error is None:
+            try:
+                run_error = error_queue.get_nowait()
+            except Empty:
+                run_error = None
 
-            ll = len(data.buffer)
-            while ll > MAX_CHARS:
-                sentences = split(args.tagger_url, data, True)
-                wrote += write_out(keeper, sentences)
-                if ll == len(data.buffer):
-                    logging.warning(
-                        f"Buffer length did not decrease after splitting, breaking to avoid infinite loop. Buffer content: '{data.buffer[:100]}'"
-                    )
-                    data.buffer = ""
-                ll = len(data.buffer)
-
-            if data.buffer:
-                sentences = split(args.tagger_url, data, True)
-                sc += len(sentences)
-                wc += sum(len(s.split()) for s in sentences)
-                wrote += write_out(keeper, sentences)
-                pbar.set_postfix(sentences=sc, words=wc)
-
-        keeper.close()
-        state["status"] = "completed"
-        state["finished_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-        state["processed_rows"] = last_idx
-        state["output_shard_count"] = keeper.shard_count
-        state["read_rows"] = data.read_lines
-        state["sentences_written"] = wrote
-        state["words_written"] = wc
-        _save_state(args.state_file, state)
-        logging.info(f"read {data.read_lines}, wrote {wrote} sentences")
-    except Exception:
-        keeper.flush()
-        state["status"] = "failed"
-        state["finished_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-        state["processed_rows"] = last_idx
-        state["output_shard_count"] = keeper.shard_count
-        state["read_rows"] = data.read_lines
-        state["sentences_written"] = wrote
-        state["words_written"] = wc
-        _save_state(args.state_file, state)
-        raise
+    if run_error is not None:
+        raise run_error
 
 
 if __name__ == "__main__":

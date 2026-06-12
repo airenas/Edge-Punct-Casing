@@ -9,7 +9,7 @@ corpus_dir?=corpus
 data_dir?=data
 hf_dataset?=VSSA-SDSA/LT_AI_BLKT
 hf_text_field?=text
-tagger_url?=http://localhost:8000/tag
+tagger_url_cfg?=--tagger-url http://localhost:8001/tag --tagger-url http://localhost:8002/tag
 limit?=10000000000
 gpus?=1
 bpe_vocab_size?=5000
@@ -43,7 +43,7 @@ $(corpus_dir)/.dwn: | $(corpus_dir)
 	 	--limit $(limit) 
 	touch $@
 $(corpus_dir)/.sentences: $(corpus_dir)/.dwn 
-	$(python_cmd) ./local/tagger.py --input $(corpus_dir)/data --output $(corpus_dir)/sentences --tagger-url $(tagger_url) \
+	$(python_cmd) ./local/tagger.py --input $(corpus_dir)/data --output $(corpus_dir)/sentences $(tagger_url_cfg) \
 		--checkpoint-every 10 --state-file $(corpus_dir)/.tagger_state.json
 	touch $@
 $(corpus_dir)/.sentences_c: $(corpus_dir)/.sentences

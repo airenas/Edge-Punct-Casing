@@ -107,6 +107,11 @@ services:
     ports:
       - "8006:8000"
 
+  tagger-vol: 
+    image: intelektikalt/ml-tagger-data:${TAGGER_VOL_VERSION}
+    volumes:
+      - tagger-data:/data:rw    
+
   lemma:
     image: airenas/lema:${LEMA_SERVICE_VERSION}
     restart: unless-stopped
