@@ -92,12 +92,14 @@ MAX_CHARS = 10000
 def _make_http_session() -> requests.Session:
     session = requests.Session()
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        backoff_factor=0.5,
-        status_forcelist=[429, 500, 502, 503, 504],
+        total=8,
+        connect=8,
+        read=8,
+        backoff_factor=1.0,
+        backoff_max=30,
+        status_forcelist=[408, 429, 500, 502, 503, 504],
         allowed_methods=frozenset(["POST"]),
+        respect_retry_after_header=True,
         raise_on_status=False,
     )
     adapter = HTTPAdapter(max_retries=retry)
