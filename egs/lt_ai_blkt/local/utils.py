@@ -15,16 +15,19 @@ class Word:
         strs = string.split("(=", 1)
         if len(strs) == 2:
             self.word = strs[0]
-            self.mi = strs[1][:-1]
+            strs_mi = strs[1].split(")", 1)
+            if len(strs_mi) == 2:
+                self.mi = strs_mi[0]
+                self.word, self.punct = split_word_punctuation(self.word + strs_mi[1]) # add punctuation to word
         else:
-            self.word = string
+            self.word, self.punct = split_word_punctuation(string)
             self.mi = ""
 
     def to_str(self):
         if self.mi:
-            return f"{self.word}(={self.mi})"
+            return f"{self.word}{self.punct}(={self.mi})"
         else:
-            return self.word
+            return f"{self.word}{self.punct}"
 
 
 def split_word_punctuation(word):

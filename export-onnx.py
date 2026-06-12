@@ -11,7 +11,8 @@ from onnxruntime.quantization import QuantType, quantize_dynamic
 from onnxsim import simplify
 
 from egs.lt_ai_blkt.local.case import LOWER, UPPER, CAP, MIX_CASE
-from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_MAP, EXCLAMATION, QUESTION, PERIOD, COMMA
+from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_MAP, EXCLAMATION, QUESTION, PERIOD, COMMA, SEMICOLON, DASH, \
+    COLON
 from train import get_model, get_params
 from utils import (setup_logger)
 
@@ -101,6 +102,10 @@ def export_model(
         "PERIOD": f"{PUNCTUATION_MAP.get(PERIOD, 0)}",
         "QUESTION": f"{PUNCTUATION_MAP.get(QUESTION, 0)}",
         "EXCLAMATION": f"{PUNCTUATION_MAP.get(EXCLAMATION, 0)}",
+        "SEMICOLON": f"{PUNCTUATION_MAP.get(SEMICOLON, 0)}",
+        "DASH": f"{PUNCTUATION_MAP.get(DASH, 0)}",
+        "COLON": f"{PUNCTUATION_MAP.get(COLON, 0)}",
+
         "LOWER": f"{LOWER}",
         "UPPER": f"{UPPER}",
         "CAP": f"{CAP}",

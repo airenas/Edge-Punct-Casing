@@ -2,11 +2,12 @@
 import argparse
 import logging
 import os
+from typing import List
 
 from tqdm import tqdm
 
 from egs.lt_ai_blkt.local.parquet_utils import count_rows, ParquetKeeper, iter_text_rows
-from egs.lt_ai_blkt.local.punctuation import PUNCTUATION
+from egs.lt_ai_blkt.local.punctuation import PUNCTUATION, DASH
 from egs.lt_ai_blkt.local.utils import Word, split_word_punctuation
 
 
@@ -60,7 +61,7 @@ def skip(w: Word):
         return True
     if w.mi.startswith("D"):
         return True
-    wrd, punct = split_word_punctuation(w.word)
+    wrd, punct = w.word, w.punct
     if not allowed_punctuation(wrd, punct):
         return True
     if not allowed_symbols(wrd):
@@ -68,7 +69,7 @@ def skip(w: Word):
     return False
 
 
-def is_ok(words):
+def is_ok(words: List[Word]):
     for i, w in enumerate(words):
         if skip(w):
             return False
@@ -81,6 +82,50 @@ def is_ok(words):
         if p == "":
             return False
     return True
+
+
+def fix_punctuation(punct):
+    for c in punct:
+        if c in _clean:
+            continue
+        if c in PUNCTUATION:
+            return c
+        if c == " ":
+            continue
+        if c in "-—‐‑‒":
+            return DASH
+    return punct
+
+
+def fix_symbols(words: List[Word]):
+    '''Drop quotes and parentheses, remove several punctuations symbols'''
+    res = []
+    last = None
+    for w in words:
+        punct = fix_punctuation(w.punct)
+        w.punct = punct
+        if w.word == "" and punct != "": # add to previous word or drop
+            if last is not None:
+                if last.word != "" and last.punct == "":
+                    last.punct = punct
+                continue
+        last = w
+        res.append(w)
+    return res
+
+_clean = "'ˈʼ′´ꞌꞋ`ʽ‘\"'`”‟¨″•"
+
+def drop_symbols(line):
+    res = []
+    last = ""
+    for c in line:
+        if c in _clean:
+            c = " "
+        if c == " " and last == " ":
+            continue
+        last = c
+        res.append(c)
+    return "".join(res).strip()
 
 
 def main():
@@ -96,8 +141,10 @@ def main():
         with ParquetKeeper(output_dir=args.output) as keeper:
             for line in iter_text_rows(args.input, keeper.text_field):
                 line = line.rstrip("\n")
+                line = drop_symbols(line)
                 strs = line.split()
                 words = [Word(s) for s in strs]
+                words = fix_symbols(words)
                 if is_ok(words):
                     ok += 1
                     ws = " ".join(w.word for w in words)
