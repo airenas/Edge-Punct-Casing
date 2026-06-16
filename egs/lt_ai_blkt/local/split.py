@@ -23,6 +23,13 @@ def main():
         required=True,
         help="Output dir",
     )
+    parser.add_argument(
+        "--max-test-size",
+        type=int,
+        default=10000000, # 10M words
+        help="Maximum number of words in test set. If the test set is larger, it will be truncated to this size.",
+    )
+
     args = parser.parse_args()
 
     logging.info(f"Splitting data in {args.input}")
@@ -30,6 +37,7 @@ def main():
     random.seed(42)
 
     trc, dc, tc = 0, 0, 0
+    dwc, twc, trwc = 0, 0, 0
     dev_p = 0.05
 
     total = count_rows(args.input)
@@ -39,17 +47,21 @@ def main():
                 open(os.path.join(args.output_dir, "train.txt"), "w", encoding="utf-8") as f_train:
             for line in iter_text_rows(args.input):
                 r = random.random()
-                if r < dev_p:
+                if r < dev_p and dwc < args.max_test_size:
                     f_dev.write(line + "\n")
                     dc += 1
-                elif r < 2 * dev_p:
+                    dwc += len(line.split())
+                elif r < 2 * dev_p and twc < args.max_test_size:
                     f_test.write(line + "\n")
                     tc += 1
+                    twc += len(line.split())
                 else:
                     f_train.write(line + "\n")
                     trc += 1
+                    trwc += len(line.split())
                 pbar.update(1)
     logging.info(f"Train: {trc}, Dev: {dc}, Test: {tc} lines")
+    logging.info(f"Train: {trwc}, Dev: {dwc}, Test: {twc} words")
 
 
 if __name__ == "__main__":
