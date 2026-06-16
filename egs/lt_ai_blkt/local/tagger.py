@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
@@ -10,12 +11,12 @@ from threading import Event, Lock, Thread
 from typing import List
 
 import requests
+from datasets import load_dataset, DatasetDict
 from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 from urllib3.util.retry import Retry
 
 from egs.lt_ai_blkt.local.dwn import ParquetKeeper
-from egs.lt_ai_blkt.local.parquet_utils import count_rows, iter_text_rows
 from egs.lt_ai_blkt.local.utils import has_upper
 
 
@@ -34,6 +35,12 @@ def get_args():
         default="text",
         help="""Input parquet column that contains text.
         """,
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="how many rows to export, 0 means no limit (default: 0)."
     )
     parser.add_argument(
         "--tagger-url",
@@ -261,7 +268,16 @@ def _split_line(session: requests.Session, url: str, line: str) -> List[str]:
 
     ll = len(data.buffer)
     while ll > MAX_CHARS:
-        sentences = split(session, url, data, False)
+        try:
+            sentences = split(session, url, data, False)
+        except Exception as err:
+            logging.error(f"Error in tagger call: {err}")
+            logging.warning(f"Offending text: {data.buffer[:MAX_CHARS]}")
+            logging.warning(f"wait 10 seconds before continuing...")
+            time.sleep(10)
+            data.buffer = ""
+            break
+
         out.extend(sentences)
         if ll == len(data.buffer):
             logging.warning(
@@ -282,12 +298,12 @@ def _worker_loop(
         url: str,
         line_queue: Queue,
         sentence_queue: Queue,
-        stop_event: Event,
-        error_queue: Queue,
+        stop_event: Event
 ):
     session = _make_http_session()
     while True:
         item = line_queue.get()
+        idx = None
         try:
             if item is None:
                 break
@@ -297,8 +313,10 @@ def _worker_loop(
             sentences = _split_line(session, url, line)
             sentence_queue.put((idx, sentences, None))
         except Exception as err:
-            stop_event.set()
-            error_queue.put(RuntimeError(f"{worker_name} failed: {err}"))
+            logging.error("%s) failed on row %s: %s. Skipping row and continuing", worker_name, idx, err)
+            if idx is not None:
+                sentence_queue.put((idx, [], None))
+            continue
         finally:
             line_queue.task_done()
     logging.info(f"{worker_name}) exiting")
@@ -309,14 +327,13 @@ def _start_workers(
         line_queue: Queue,
         sentence_queue: Queue,
         stop_event: Event,
-        error_queue: Queue,
 ) -> List[Thread]:
     threads: List[Thread] = []
     for i, url in enumerate(urls):
         name = f"tagger-worker-{i + 1}"
         th = Thread(
             target=_worker_loop,
-            args=(name, url, line_queue, sentence_queue, stop_event, error_queue),
+            args=(name, url, line_queue, sentence_queue, stop_event),
             name=name,
             daemon=False,
         )
@@ -325,7 +342,8 @@ def _start_workers(
     return threads
 
 
-def _writer_loop(args, sentence_queue: Queue, state: TaggerState, stop_event: Event, error_queue: Queue, progress: Progress,
+def _writer_loop(args, sentence_queue: Queue, state: TaggerState, stop_event: Event, error_queue: Queue,
+                 progress: Progress,
                  progress_lock: Lock):
     try:
         with (ParquetKeeper(output_dir=Path(args.output)) as keeper):
@@ -384,7 +402,21 @@ def main():
     workers = len(args.tagger_url)
     logging.info(f"Using {workers} tagger URLs")
 
-    total_rows = count_rows(args.input)
+    logging.info("Loading dataset %s", args.input)
+    ds_loaded = load_dataset(args.input)
+    if isinstance(ds_loaded, DatasetDict):
+        split_name = next(iter(ds_loaded.keys()))
+        logging.info("Using split '%s'", split_name)
+        ds = ds_loaded[split_name]
+    else:
+        ds = ds_loaded
+
+    if args.text_field not in ds.column_names:
+        raise ValueError(
+            f"Column '{args.text_field}' not found. Available: {', '.join(ds.column_names)}"
+        )
+
+    total_rows = ds.num_rows
     state = _load_state(args.state_file)
     if state:
         logging.info("Last conversion state found: %s", args.state_file)
@@ -410,7 +442,12 @@ def main():
 
     line_queue: Queue = Queue(maxsize=workers)
     sentence_queue: Queue = Queue(maxsize=workers)
-    worker_threads = _start_workers(args.tagger_url, line_queue, sentence_queue, stop_event, error_queue)
+    worker_threads = _start_workers(
+        args.tagger_url,
+        line_queue,
+        sentence_queue,
+        stop_event,
+    )
     logging.info("Started %d workers with queues", len(worker_threads))
 
     resume_from_row = state.read_rows
@@ -433,8 +470,11 @@ def main():
     run_error = None
     try:
         with tqdm(total=total_rows, unit="rows", desc="Tagging rows") as pbar:
-            for idx, line in enumerate(iter_text_rows(args.input, args.text_field)):
+            for idx, row in enumerate(tqdm(ds)):
                 pbar.update(1)
+                if 0 < args.limit <= idx:
+                    logging.info("Reached limit of %d rows, stopping", args.limit)
+                    break
                 if stop_event.is_set():
                     try:
                         thread_err = error_queue.get_nowait()
@@ -444,7 +484,13 @@ def main():
                     raise RuntimeError("Stopping due to worker/writer error")
                 if idx <= resume_from_row:
                     continue
-                line_queue.put((idx, line))
+                value = row.get(args.text_field)
+                if not isinstance(value, str):
+                    continue
+
+                if value is None:
+                    continue
+                line_queue.put((idx, value))
                 with progress_lock:
                     pbar.set_postfix(sentences=progress.sentences, words=progress.words)
     except Exception as err:  # noqa: BLE001

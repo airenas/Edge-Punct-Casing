@@ -38,13 +38,13 @@ info:
 $(data_dir) $(corpus_dir) $(data_dir)/texts $(data_dir)/lang_bpe_$(bpe_vocab_size) \
 	$(exp_dir):
 	mkdir -p $@
-$(corpus_dir)/.dwn: | $(corpus_dir)
-	$(python_cmd) ./local/dwn.py --dataset $(hf_dataset) --text-field $(hf_text_field) --output $(corpus_dir)/data \
-	 	--limit $(limit) 
-	touch $@
-$(corpus_dir)/.sentences: $(corpus_dir)/.dwn 
-	$(python_cmd) ./local/tagger.py --input $(corpus_dir)/data --output $(corpus_dir)/sentences $(tagger_url_cfg) \
-		--checkpoint-every 10 --state-file $(corpus_dir)/.tagger_state.json
+# $(corpus_dir)/.dwn: | $(corpus_dir)
+# 	$(python_cmd) ./local/dwn.py --dataset $(hf_dataset) --text-field $(hf_text_field) --output $(corpus_dir)/data \
+# 	 	--limit $(limit) 
+# 	touch $@
+$(corpus_dir)/.sentences:
+	$(python_cmd) ./local/tagger.py --input $(hf_dataset) --output $(corpus_dir)/sentences $(tagger_url_cfg) \
+		--checkpoint-every 100 --state-file $(corpus_dir)/.tagger_state.json --limit $(limit) 
 	touch $@
 $(corpus_dir)/.sentences_c: $(corpus_dir)/.sentences
 	$(python_cmd) ./local/fix_case.py --input $(corpus_dir)/sentences --output $(corpus_dir)/sentences_c
