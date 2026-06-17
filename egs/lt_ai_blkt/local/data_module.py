@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from tqdm import tqdm
 
 from egs.lt_ai_blkt.local.case import get_case_id
+from egs.lt_ai_blkt.local.parquet_utils import FeatureParquetKeeper
 from egs.lt_ai_blkt.local.punctuation import get_punctuation_id
 from egs.lt_ai_blkt.local.utils import split_word_punctuation
 
@@ -139,43 +140,14 @@ class TextDatasetNew:
                         valid.append(0)
                         last_valid.append(0)
 
-    @staticmethod
-    def _write_feature(fp, feature, max_seq_length):
-        for i in range(max_seq_length):
-            fp.write(str(feature.token_ids[i]) + " ")
-        fp.write("\n")
-
-        for i in range(max_seq_length):
-            fp.write(str(feature.label_ids[0][i]) + " ")
-        fp.write("\n")
-
-        for i in range(max_seq_length):
-            fp.write(str(feature.label_ids[1][i]) + " ")
-        fp.write("\n")
-
-        for i in range(max_seq_length):
-            fp.write(str(feature.valid_ids[i]) + " ")
-        fp.write("\n")
-
-        for i in range(max_seq_length):
-            fp.write(str(feature.token_masks[i]) + " ")
-        fp.write("\n")
-
-        for i in range(max_seq_length):
-            fp.write(str(feature.label_masks[i]) + " ")
-        fp.write("\n")
-
-        fp.write(str(feature.label_len))
-        fp.write("\n")
-
     def convert_examples_to_features(
             self, max_seq_length, input_file, output_file
     ):
         written = 0
-        with open(output_file, "w", encoding="utf-8") as out_fp:
+        with FeatureParquetKeeper(output_file, max_seq_length=max_seq_length) as out_keeper:
             with open(input_file, "r", encoding="utf-8") as in_fp:
                 for feature in tqdm(self.iter_features_bos_eos(max_seq_length, in_fp)):
-                    self._write_feature(out_fp, feature, max_seq_length)
+                    out_keeper.feed_feature(feature)
                     written += 1
 
         logging.info("Saved %s features to %s", written, output_file)

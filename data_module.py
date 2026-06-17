@@ -1,10 +1,11 @@
 import argparse
 import logging
+import random
 
 import numpy as np
+import pyarrow.parquet as pq
 import sentencepiece
-from torch.utils.data import (Dataset, DataLoader, RandomSampler)
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import (Dataset, DataLoader, IterableDataset, get_worker_info)
 from tqdm import tqdm
 
 from egs.lt_ai_blkt.local.data_module import InputFeatures
@@ -92,6 +93,100 @@ class TextDataset(Dataset):
                     label_len = 0
 
 
+class StreamingParquetDataset(IterableDataset):
+    def __init__(
+            self,
+            filename: str,
+            max_seq_length: int,
+            world_size: int = 1,
+            rank: int = 0,
+            shuffle_buffer_size: int = 10000,
+            seed: int = 42,
+    ):
+        super().__init__()
+        self.filename = str(filename)
+        self.max_seq_length = max_seq_length
+        self.world_size = world_size
+        self.rank = rank
+        self.shuffle_buffer_size = max(1, shuffle_buffer_size)
+        self.seed = seed
+        self.epoch = 0
+        self._num_examples = None
+
+    def set_epoch(self, epoch: int):
+        self.epoch = epoch
+
+    def __len__(self):
+        if self._num_examples is None:
+            pf = pq.ParquetFile(self.filename)
+            self._num_examples = pf.metadata.num_rows
+
+        if self.world_size <= 1:
+            return self._num_examples
+
+        # Per-rank sample count after distributed sharding.
+        base = self._num_examples // self.world_size
+        rem = self._num_examples % self.world_size
+        return base + (1 if self.rank < rem else 0)
+
+    def _iter_rows(self):
+        pf = pq.ParquetFile(self.filename)
+        for batch in pf.iter_batches(batch_size=128):
+            table = batch.to_pydict()
+            for i in range(len(table["label_len"])):
+                yield {
+                    "token_ids": list(table["token_ids"][i]),
+                    "case_labels": list(table["case_labels"][i]),
+                    "punct_labels": list(table["punct_labels"][i]),
+                    "valid_ids": list(table["valid_ids"][i]),
+                    "token_masks": list(table["token_masks"][i]),
+                    "label_masks": list(table["label_masks"][i]),
+                    "label_len": table["label_len"][i],
+                }
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+        if worker_info is None:
+            worker_id = 0
+            num_workers = 1
+        else:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+
+        total_shards = self.world_size * num_workers
+        shard_id = self.rank * num_workers + worker_id
+
+        rng = random.Random(self.seed + self.epoch * 104729 + shard_id)
+        buffer = []
+
+        for rec_idx, row in enumerate(self._iter_rows()):
+            if rec_idx % total_shards != shard_id:
+                continue
+
+            sample = (
+                np.array(row["token_ids"]),
+                np.array([row["case_labels"], row["punct_labels"]]),
+                np.array(row["valid_ids"]),
+                row["label_len"],
+                np.array(row["label_masks"]),
+            )
+
+            if self.shuffle_buffer_size == 1:
+                yield sample
+                continue
+
+            if len(buffer) < self.shuffle_buffer_size:
+                buffer.append(sample)
+            else:
+                pop_idx = rng.randrange(len(buffer))
+                yield buffer.pop(pop_idx)
+                buffer.append(sample)
+
+        while buffer:
+            pop_idx = rng.randrange(len(buffer))
+            yield buffer.pop(pop_idx)
+
+
 class DataModule(object):
 
     def __init__(self, args: argparse.Namespace, sp: sentencepiece):
@@ -100,57 +195,60 @@ class DataModule(object):
 
         self.data_dir = self.args.data_dir
 
-        self.train_dataset = TextDataset()
-        self.valid_dataset = TextDataset()
-        self.test_dataset = TextDataset()
-
-        self.train_features_file = f"{self.data_dir}/train_features.txt"
-        self.valid_features_file = f"{self.data_dir}/dev_features.txt"
-        self.test_features_file = f"{self.data_dir}/test_features.txt"
+        self.train_features_file = f"{self.data_dir}/train_features.parquet"
+        self.valid_features_file = f"{self.data_dir}/dev_features.parquet"
+        self.test_features_file = f"{self.data_dir}/test_features.parquet"
+        self.streaming_num_workers = getattr(self.args, "streaming_num_workers", 0)
+        self.streaming_shuffle_buffer = getattr(self.args, "streaming_shuffle_buffer", 10000)
 
     def train_dataloader(self) -> DataLoader:
-        self.train_dataset.load_features(self.train_features_file, self.args.max_seq_length)
-        if self.args.world_size > 1:
-            train_sampler = DistributedSampler(self.train_dataset)
-        # shuffle = False
-        else:
-            train_sampler = RandomSampler(self.train_dataset)
-        # shuffle = True
-        train_dataloader = DataLoader(
-            dataset=self.train_dataset,
-            sampler=train_sampler,
-            batch_size=self.args.batch_size,
-            # shuffle=shuffle,
+        logging.info(f"Using streaming parquet training dataset from {self.train_features_file}")
+        train_dataset = StreamingParquetDataset(
+            filename=self.train_features_file,
+            max_seq_length=self.args.max_seq_length,
+            world_size=self.args.world_size,
+            rank=getattr(self.args, "rank", 0),
+            shuffle_buffer_size=self.streaming_shuffle_buffer,
+            seed=getattr(self.args, "seed", 42),
         )
-
+        train_dataloader = DataLoader(
+            dataset=train_dataset,
+            batch_size=self.args.batch_size,
+            num_workers=self.streaming_num_workers,
+        )
         return train_dataloader
 
     def valid_dataloader(self) -> DataLoader:
-        self.valid_dataset.load_features(self.valid_features_file, self.args.max_seq_length)
-
-        if self.args.world_size > 1:
-            valid_sampler = DistributedSampler(self.valid_dataset)
-        else:
-            valid_sampler = RandomSampler(self.valid_dataset)
-        valid_dataloader = DataLoader(
-            dataset=self.valid_dataset,
-            sampler=valid_sampler,
-            batch_size=self.args.batch_size
+        logging.info(f"Using streaming parquet validation dataset from {self.valid_features_file}")
+        valid_dataset = StreamingParquetDataset(
+            filename=self.valid_features_file,
+            max_seq_length=self.args.max_seq_length,
+            world_size=self.args.world_size,
+            rank=getattr(self.args, "rank", 0),
+            shuffle_buffer_size=1,
+            seed=getattr(self.args, "seed", 42),
         )
-
+        valid_dataloader = DataLoader(
+            dataset=valid_dataset,
+            batch_size=self.args.batch_size,
+            num_workers=self.streaming_num_workers,
+        )
         return valid_dataloader
 
     def test_dataloader(self) -> DataLoader:
-        self.test_dataset.load_features(self.test_features_file, self.args.max_seq_length)
-
-        if self.args.world_size > 1:
-            test_sampler = DistributedSampler(self.test_dataset)
-        else:
-            test_sampler = RandomSampler(self.test_dataset)
+        logging.info(f"Using streaming parquet test dataset from {self.test_features_file}")
+        test_dataset = StreamingParquetDataset(
+            filename=self.test_features_file,
+            max_seq_length=self.args.max_seq_length,
+            world_size=self.args.world_size,
+            rank=getattr(self.args, "rank", 0),
+            shuffle_buffer_size=1,
+            seed=getattr(self.args, "seed", 42),
+        )
         test_dataloader = DataLoader(
-            dataset=self.test_dataset,
-            sampler=test_sampler,
-            batch_size=self.args.batch_size
+            dataset=test_dataset,
+            batch_size=self.args.batch_size,
+            num_workers=self.streaming_num_workers,
         )
         return test_dataloader
 

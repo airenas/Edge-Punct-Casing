@@ -1,4 +1,5 @@
 import argparse
+from collections import deque
 import logging
 import os
 import random
@@ -127,6 +128,14 @@ def get_parser():
                         type=int,
                         # required=True,
                         help="Batch size for training")
+    parser.add_argument("--streaming-num-workers",
+                        default=2,
+                        type=int,
+                        help="DataLoader workers for streaming parquet dataset")
+    parser.add_argument("--streaming-shuffle-buffer",
+                        default=10000,
+                        type=int,
+                        help="Buffer size used to shuffle streaming parquet samples")
     parser.add_argument("--base-lr",
                         type=float,
                         default=0.002,
@@ -176,6 +185,7 @@ def get_params() -> AttributeDict:
             "best_valid_epoch": -1,
             "case_loss": -1,
             "punct_loss": -1,
+            "total_valid_batches": -1,
         }
     )
 
@@ -319,11 +329,15 @@ def compute_validation_loss(
 
     tot_loss = 0
 
+    tb = None
+    if params.total_valid_batches > 0:
+        tb = params.total_valid_batches
     with torch.no_grad():
-        for batch_idx, batch in enumerate(valid_dl):
+        for batch_idx, batch in enumerate(tqdm(valid_dl, desc=f"Valid epoch {params.cur_epoch}", total=tb)):
+            tb = batch_idx + 1
             loss = compute_loss(model, batch, device, params)
             tot_loss = tot_loss + loss.detach().cpu().item()
-
+    params.total_valid_batches = tb
     if tot_loss < params.best_valid_loss:
         params.best_valid_loss = tot_loss
         params.best_valid_epoch = params.cur_epoch
@@ -337,6 +351,8 @@ def initialize_weights(m):
 
 
 def run(rank, world_size, args):
+    args.rank = rank
+
     params = get_params()
     params.update(vars(args))
 
@@ -413,12 +429,14 @@ def run(rank, world_size, args):
     logging.info("Training started")
 
     # add start_epoch
-    tb = None
+    tb = len(train_dl)
     for epoch in range(args.epochs + 1):
         params.cur_epoch = epoch
 
-        if world_size > 1:
-            train_dl.sampler.set_epoch(epoch)
+        if world_size > 1 and hasattr(train_dl.dataset, "set_epoch"):
+            train_dl.dataset.set_epoch(epoch)
+        elif hasattr(train_dl.dataset, "set_epoch"):
+            train_dl.dataset.set_epoch(epoch)
 
         if tb_writer is not None:
             tb_writer.add_scalar("train/epoch", epoch, params.batch_idx_train)
@@ -426,17 +444,20 @@ def run(rank, world_size, args):
         model.train()
 
         tot_loss = 0
+        loss_window = deque(maxlen=100)
 
         for batch_idx, batch in tqdm(enumerate(train_dl), total=tb, desc=f"Train epoch {epoch}"):
             params.batch_idx_train += 1
             tb = batch_idx + 1
 
             loss = compute_loss(model, batch, device, params)
+            loss_value = loss.detach().cpu().item()
+            loss_window.append(loss_value)
 
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            tot_loss = tot_loss + loss.detach().cpu().item()
+            tot_loss = tot_loss + loss_value
 
             if batch_idx % params.log_interval == 0:
                 # cur_lr = max(scheduler.get_last_lr()) # for StepLR
@@ -446,7 +467,8 @@ def run(rank, world_size, args):
                     f"Epoch {params.cur_epoch}, "
                     f"batch {batch_idx}, "
                     f"lr: [{cur_lr:.2e}], "
-                    f"loss[{loss.detach().cpu().item()}], "
+                    f"loss[{loss_value}], "
+                    f"loss_avg_100[{sum(loss_window) / len(loss_window):.6f}], "
                     f"case_loss[{params.case_loss}], "
                     f"punct_loss[{params.punct_loss}], "
                 )
@@ -456,7 +478,10 @@ def run(rank, world_size, args):
                         "train/learning_rate", cur_lr, params.batch_idx_train
                     )
                     tb_writer.add_scalar(
-                        "train/current_loss", loss.detach().cpu().item(), params.batch_idx_train
+                        "train/current_loss", loss_value, params.batch_idx_train
+                    )
+                    tb_writer.add_scalar(
+                        "train/current_loss_avg_100", sum(loss_window) / len(loss_window), params.batch_idx_train
                     )
                     tb_writer.add_scalar(
                         "train/tot_loss", tot_loss, params.batch_idx_train
@@ -492,7 +517,7 @@ def run(rank, world_size, args):
                     tb_writer.add_scalar(
                         "train/valid_loss", valid_loss, params.batch_idx_train
                     )
-
+    
         logging.info("start validation")
         valid_loss = compute_validation_loss(
             params=params,
@@ -514,8 +539,11 @@ def run(rank, world_size, args):
 
         # scheduler.step() # for StepLR
 
-        if tot_loss < params.best_train_loss:
-            params.best_train_loss = params.best_train_loss
+        avg_train_loss = tot_loss / max(1, tb if tb is not None else 0)
+        logging.info(f"Epoch {params.cur_epoch}, average train loss[{avg_train_loss}]")
+
+        if avg_train_loss < params.best_train_loss:
+            params.best_train_loss = avg_train_loss
             params.best_train_epoch = params.cur_epoch
 
         save_checkpoint(

@@ -18,7 +18,7 @@ def get_args():
     parser.add_argument(
         "--output",
         type=str,
-        help="""Output features file
+        help="""Output features file (.parquet)
             """,
     )
     parser.add_argument("--bpe_model",

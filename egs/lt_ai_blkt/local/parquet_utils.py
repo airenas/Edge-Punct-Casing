@@ -5,6 +5,104 @@ from typing import List
 import pyarrow.parquet as pq
 import pyarrow as pa
 
+
+class FeatureParquetKeeper:
+    def __init__(
+        self,
+        output_file: str | Path,
+        max_seq_length: int,
+        compression: str | None = "zstd",
+        batch_size: int = 5000,
+    ):
+        self.output_file = Path(output_file)
+        self.max_seq_length = max_seq_length
+        self.compression = "NONE" if compression in (None, "none") else str(compression)
+        self.batch_size = max(1, batch_size)
+
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        self.tmp_output = self.output_file.with_suffix(self.output_file.suffix + ".inprogress")
+
+        self._int_list_type = pa.list_(pa.int32(), self.max_seq_length)
+        self._schema = pa.schema(
+            [
+                ("token_ids", self._int_list_type),
+                ("case_labels", self._int_list_type),
+                ("punct_labels", self._int_list_type),
+                ("valid_ids", self._int_list_type),
+                ("token_masks", self._int_list_type),
+                ("label_masks", self._int_list_type),
+                ("label_len", pa.int32()),
+            ]
+        )
+        self._writer = pq.ParquetWriter(str(self.tmp_output), self._schema, compression=self.compression)
+        self.rows_written = 0
+
+        self._buffer = {
+            "token_ids": [],
+            "case_labels": [],
+            "punct_labels": [],
+            "valid_ids": [],
+            "token_masks": [],
+            "label_masks": [],
+            "label_len": [],
+        }
+
+    def _validate_lengths(self, feature):
+        assert len(feature.token_ids) == self.max_seq_length
+        assert len(feature.label_ids[0]) == self.max_seq_length
+        assert len(feature.label_ids[1]) == self.max_seq_length
+        assert len(feature.valid_ids) == self.max_seq_length
+        assert len(feature.token_masks) == self.max_seq_length
+        assert len(feature.label_masks) == self.max_seq_length
+
+    def feed_feature(self, feature):
+        self._validate_lengths(feature)
+
+        self._buffer["token_ids"].append(feature.token_ids)
+        self._buffer["case_labels"].append(feature.label_ids[0])
+        self._buffer["punct_labels"].append(feature.label_ids[1])
+        self._buffer["valid_ids"].append(feature.valid_ids)
+        self._buffer["token_masks"].append(feature.token_masks)
+        self._buffer["label_masks"].append(feature.label_masks)
+        self._buffer["label_len"].append(feature.label_len)
+
+        if len(self._buffer["label_len"]) >= self.batch_size:
+            self._flush()
+
+    def _flush(self):
+        if not self._buffer["label_len"]:
+            return
+
+        table = pa.Table.from_arrays(
+            [
+                pa.array(self._buffer["token_ids"], type=self._int_list_type),
+                pa.array(self._buffer["case_labels"], type=self._int_list_type),
+                pa.array(self._buffer["punct_labels"], type=self._int_list_type),
+                pa.array(self._buffer["valid_ids"], type=self._int_list_type),
+                pa.array(self._buffer["token_masks"], type=self._int_list_type),
+                pa.array(self._buffer["label_masks"], type=self._int_list_type),
+                pa.array(self._buffer["label_len"], type=pa.int32()),
+            ],
+            schema=self._schema,
+        )
+        self._writer.write_table(table)
+        self.rows_written += len(self._buffer["label_len"])
+
+        for k in self._buffer:
+            self._buffer[k].clear()
+
+    def close(self):
+        self._flush()
+        self._writer.close()
+        self.tmp_output.replace(self.output_file)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
 class ParquetKeeper:
     def __init__(
         self,

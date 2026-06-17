@@ -33,6 +33,12 @@ def get_args():
         help="""Output parquet path (file name prefix or .parquet file name).
             """,
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="how many rows to export, 0 means no limit (default: 0)."
+    )
     return parser.parse_args()
 
 
@@ -91,6 +97,9 @@ def main():
                 ws = " ".join(w.to_str() for w in words)
                 if keeper.feed_text(ws):
                     wrote += 1
+                if args.limit > 0 and wrote >= args.limit:
+                    logging.info(f"Reached limit of {args.limit} rows, stopping.")
+                    break
                 pbar.update(1)
 
     logging.info("Done, wrote %d rows", wrote)

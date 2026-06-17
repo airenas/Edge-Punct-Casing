@@ -47,7 +47,7 @@ $(corpus_dir)/.sentences:
 		--checkpoint-every 100 --state-file $(corpus_dir)/.tagger_state.json --limit $(limit) 
 	touch $@
 $(corpus_dir)/.sentences_c: $(corpus_dir)/.sentences
-	$(python_cmd) ./local/fix_case.py --input $(corpus_dir)/sentences --output $(corpus_dir)/sentences_c
+	$(python_cmd) ./local/fix_case.py --input $(corpus_dir)/sentences --output $(corpus_dir)/sentences_c --limit $(limit) 
 	touch $@
 $(corpus_dir)/.cleaned: $(corpus_dir)/.sentences_c
 	$(python_cmd) ./local/clean.py --input $(corpus_dir)/sentences_c --output $(corpus_dir)/cleaned
@@ -68,15 +68,17 @@ $(data_dir)/texts/lower.txt: $(data_dir)/texts/train.txt
 	mv $@_ $@
 $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model: $(data_dir)/texts/lower.txt | $(data_dir)/lang_bpe_$(bpe_vocab_size)
 	$(python_cmd) ./local/sentence_piece.py --input $(data_dir)/texts/lower.txt --vocab_size $(bpe_vocab_size) --output_dir $(data_dir)/lang_bpe_$(bpe_vocab_size)
-$(data_dir)/texts/%_features.txt: $(data_dir)/texts/%.txt $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model
+$(data_dir)/texts/%_features.parquet: $(data_dir)/texts/%.txt $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model
 	$(python_cmd) ./local/make_features.py --input $(data_dir)/texts/$*.txt --output $@_ --bpe_model $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model	
 	mv $@_ $@
+inspect/features/%: $(data_dir)/texts/%_features.parquet
+	$(python_cmd) ./local/inspect_features_parquet.py --input $(data_dir)/texts/$*_features.parquet --rows 10
 ###################################################################
 prepare/data: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
-	$(data_dir)/texts/train_features.txt $(data_dir)/texts/dev_features.txt $(data_dir)/texts/test_features.txt
+	$(data_dir)/texts/train_features.parquet $(data_dir)/texts/dev_features.parquet $(data_dir)/texts/test_features.parquet
 .PHONY: prepare/data
 ###################################################################
-train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_features.txt $(data_dir)/texts/dev_features.txt | $(exp_dir)
+train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_features.parquet $(data_dir)/texts/dev_features.parquet | $(exp_dir)
 	$(python_cmd) ./../../train.py \
 		--world-size $(gpus) \
 		--do_finetune False \
@@ -89,7 +91,7 @@ train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_
 .PHONY: train
 ###################################################################
 ###################################################################
-test: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/test_features.txt | $(exp_dir)
+test: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/test_features.parquet | $(exp_dir)
 	$(python_cmd) ./../../decode.py \
 		--world-size $(gpus) \
 		--data_dir $(data_dir)/texts \
