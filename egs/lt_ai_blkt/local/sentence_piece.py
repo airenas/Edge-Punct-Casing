@@ -47,7 +47,7 @@ def generate_tokens(lang_dir: Path):
 def main():
     args = get_args()
     logging.info(f"Training BPE model with vocab size {args.vocab_size} on {args.input}")
-    input_sentence_size = 100000000
+    input_sentence_size = 10_000_000
     character_coverage = 1.0
     user_defined_symbols = ["<blk>", "<s>", "</s>"]
     unk_id = len(user_defined_symbols)
@@ -61,9 +61,11 @@ def main():
         input_sentence_size=input_sentence_size,
         character_coverage=character_coverage,
         user_defined_symbols=user_defined_symbols,
+        shuffle_input_sentence=True,
         unk_id=unk_id,
         bos_id=-1,
         eos_id=-1,
+        train_extremely_large_corpus=True
     )
 
     generate_tokens(Path(args.output_dir))
