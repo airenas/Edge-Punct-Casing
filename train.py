@@ -1,8 +1,8 @@
 import argparse
-from collections import deque
 import logging
 import os
 import random
+from collections import deque
 from typing import Optional, Union
 
 import sentencepiece as spm
@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from data_module import DataModule
 from egs.lt_ai_blkt.local.case import CASE_ID_MAP
-from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_MAP
+from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_ID_MAP
 from model import Model_new
 from utils import (
     AttributeDict,
@@ -170,7 +170,7 @@ def get_params() -> AttributeDict:
             "hidden_size1": 384,
             "hidden_size2": 384,
             "out_size_case": len(CASE_ID_MAP),
-            "out_size_punct": len(PUNCTUATION_MAP),
+            "out_size_punct": len(PUNCTUATION_ID_MAP),
             "dropout": 0.5,
             "gamma": 0.5,  # StepLR
             "factor": 0.8,  # ReduceLROnPlateau

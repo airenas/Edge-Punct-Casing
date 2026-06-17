@@ -101,15 +101,15 @@ def export_model(
         "COMMA": f"{PUNCTUATION_MAP.get(COMMA, 0)}",
         "PERIOD": f"{PUNCTUATION_MAP.get(PERIOD, 0)}",
         "QUESTION": f"{PUNCTUATION_MAP.get(QUESTION, 0)}",
-        "EXCLAMATION": f"{PUNCTUATION_MAP.get(EXCLAMATION, 0)}",
-        "SEMICOLON": f"{PUNCTUATION_MAP.get(SEMICOLON, 0)}",
+        # "EXCLAMATION": f"{PUNCTUATION_MAP.get(EXCLAMATION, 0)}",
+        # "SEMICOLON": f"{PUNCTUATION_MAP.get(SEMICOLON, 0)}",
         "DASH": f"{PUNCTUATION_MAP.get(DASH, 0)}",
         "COLON": f"{PUNCTUATION_MAP.get(COLON, 0)}",
 
         "LOWER": f"{LOWER}",
         "UPPER": f"{UPPER}",
         "CAP": f"{CAP}",
-        "MIX_CASE": f"{MIX_CASE}",
+        # "MIX_CASE": f"{MIX_CASE}",
     }
     logging.info(f"meta_data: {meta_data}")
 

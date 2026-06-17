@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from egs.lt_ai_blkt.local.parquet_utils import count_rows, ParquetKeeper, iter_text_rows
 from egs.lt_ai_blkt.local.punctuation import PUNCTUATION, DASH
-from egs.lt_ai_blkt.local.utils import Word, split_word_punctuation
+from egs.lt_ai_blkt.local.utils import Word
 
 
 def get_args():

@@ -118,6 +118,22 @@ def get_metrics(output, target):
     return precision, recall, f_scores, (overall_precision, overall_recall, overall_f_scores)
 
 
+def get_counts(output, target):
+    assert len(output) == len(target), f"output len:{output} != target len:{target}"
+
+    predicted = {}
+    expected = {}
+    correct = {}
+
+    for i in range(len(output)):
+        inc(predicted, output[i])
+        inc(expected, target[i])
+        if output[i] == target[i]:
+            inc(correct, output[i])
+
+    return predicted, expected, correct
+
+
 def print_metrics(logging, precision, recall, f_scores, overall, label_map):
     # print(f"precision:{precision}")
 
@@ -131,6 +147,19 @@ def print_metrics(logging, precision, recall, f_scores, overall, label_map):
                  f"\tRec [{overall[1]:.3f}], " +
                  f"\tF1 [{overall[2]:.3f}], "
                  )
+
+
+def print_label_counts(logging, output, target, label_map, title):
+    predicted, expected, correct = get_counts(output, target)
+    total_expected = sum(expected.values())
+
+    logging.info(title)
+    for k in sorted(label_map.keys()):
+        label_name = label_map[k]
+        expected_pct = (100.0 * expected.get(k, 0) / total_expected) if total_expected > 0 else 0.0
+        logging.info(
+            f"{k} -> {label_name}: predicted [{predicted.get(k, 0)}], expected [{expected.get(k, 0)}] ({expected_pct:.2f}%), correct [{correct.get(k, 0)}]"
+        )
 
 
 @torch.no_grad()
@@ -222,10 +251,14 @@ def main():
         "\nCase metrics:\n----------------------------------------------------------------------------------------")
     print_metrics(logging, total_precision_case, total_recall_case, total_f_scores_case, total_overall_case,
                   CASE_ID_MAP)
+    logging.info("\n")                  
+    print_label_counts(logging, all_case_pred, all_case_labels, CASE_ID_MAP, "Case label counts")
     logging.info(
         "\nPunct metrics:\n=======================================================================================")
     print_metrics(logging, total_precision_punct, total_recall_punct, total_f_scores_punct, total_overall_punct,
                   PUNCTUATION_ID_MAP)
+    logging.info("\n")                  
+    print_label_counts(logging, all_punct_pred, all_punct_labels, PUNCTUATION_ID_MAP, "Punctuation label counts")
 
 
 if __name__ == "__main__":

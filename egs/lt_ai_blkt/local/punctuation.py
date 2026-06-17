@@ -12,17 +12,19 @@ PUNCTUATION_MAP = {
     COMMA: 1,
     PERIOD: 2,
     QUESTION: 3,
-    EXCLAMATION: 4,
-    COLON: 5,
-    DASH: 6,
-    SEMICOLON: 7,
+    EXCLAMATION: 2, # treat exclamation as period
+    COLON: 4,
+    DASH: 5,
+    SEMICOLON: 1, # treat semicolon as comma
 }
 
 
 def get_punctuation_id(s: str):
     return PUNCTUATION_MAP.get(s, 0)
 
-PUNCTUATION_ID_MAP = {v:k for k,v in PUNCTUATION_MAP.items()}
+# PUNCTUATION_ID_MAP = {v:k for k,v in PUNCTUATION_MAP.items()}
+PUNCTUATION_ID_MAP = {}
+_ = [PUNCTUATION_ID_MAP.setdefault(v, k) for k, v in PUNCTUATION_MAP.items()]
 
 # punct_id = {0:"NO_PUNCT",
 #              1:"COMMA",
