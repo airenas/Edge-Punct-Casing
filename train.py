@@ -176,9 +176,10 @@ def get_params() -> AttributeDict:
             "factor": 0.8,  # ReduceLROnPlateau
             "patience": 2,  # ReduceLROnPlateau
             "log_interval": 100,  # 100, for ~1000 trian dl length # 200 ~ big data
-            "valid_interval": 300,  # 300, for ~1000 trian dl length # 800 ~ big data
+            "valid_interval": 1000,  # 300, for ~1000 trian dl length # 800 ~ big data
             "batch_idx_train": 0,
-            "save_every_n": 200,  # 200, for ~1000 trian dl length # 300 ~ big data
+            "save_every_n": 1000,  # 200, for ~1000 trian dl length # 300 ~ big data
+            "reset_interval": 100,
             "best_train_loss": float("inf"),
             "best_valid_loss": float("inf"),
             "best_train_epoch": -1,
@@ -313,10 +314,25 @@ def compute_loss(
     loss = case_loss + 0.7 * punct_loss
 
     # for log
-    params.case_loss = case_loss
-    params.punct_loss = punct_loss
+    # params.case_loss = case_loss
+    # params.punct_loss = punct_loss
 
-    return loss
+    return loss, case_loss, punct_loss
+
+
+class TotalLossTracker:
+    def __init__(self, reset_interval: int = 100):
+        assert reset_interval > 0, "reset_interval should be positive"
+        self._a = 1 / reset_interval
+        self.tot_loss = 0
+        self._count = 0
+
+    def add(self, loss: float):
+        if self._count == 0:
+            self.tot_loss = loss
+        else:
+            self.tot_loss = self.tot_loss * (1 - self._a) + loss * self._a
+        self._count += 1
 
 
 def compute_validation_loss(
@@ -324,10 +340,10 @@ def compute_validation_loss(
         model: Union[nn.Module, DDP],
         valid_dl: torch.utils.data.DataLoader,
         device: torch.device
-) -> Tensor:
+) -> (Tensor, Tensor, Tensor):
     model.eval()
 
-    tot_loss = 0
+    tot_loss, tot_case_loss, tot_punct_loss, lc = 0, 0, 0, 0
 
     tb = None
     if params.total_valid_batches > 0:
@@ -335,14 +351,20 @@ def compute_validation_loss(
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(valid_dl, desc=f"Valid epoch {params.cur_epoch}", total=tb)):
             tb = batch_idx + 1
-            loss = compute_loss(model, batch, device, params)
+            loss, case_loss, punct_loss = compute_loss(model, batch, device, params)
             tot_loss = tot_loss + loss.detach().cpu().item()
+            tot_case_loss = tot_case_loss + case_loss.detach().cpu().item()
+            tot_punct_loss = tot_punct_loss + punct_loss.detach().cpu().item()
+            lc += 1
+
+    if lc == 0:
+        lc = 1
     params.total_valid_batches = tb
-    if tot_loss < params.best_valid_loss:
-        params.best_valid_loss = tot_loss
+    if tot_loss / lc < params.best_valid_loss:
+        params.best_valid_loss = tot_loss / lc
         params.best_valid_epoch = params.cur_epoch
 
-    return tot_loss / len(valid_dl)
+    return tot_loss / lc, tot_case_loss / lc, tot_punct_loss / lc
 
 
 def initialize_weights(m):
@@ -443,36 +465,40 @@ def run(rank, world_size, args):
 
         model.train()
 
-        tot_loss = 0
-        loss_window = deque(maxlen=100)
+        tot_loss, tot_case_loss, tot_punct_loss = TotalLossTracker(params.reset_interval), TotalLossTracker(params.reset_interval), TotalLossTracker(params.reset_interval)
 
         for batch_idx, batch in tqdm(enumerate(train_dl), total=tb, desc=f"Train epoch {epoch}"):
             params.batch_idx_train += 1
             tb = batch_idx + 1
 
-            loss = compute_loss(model, batch, device, params)
+            loss, case_loss, punct_loss = compute_loss(model, batch, device, params)
             loss_value = loss.detach().cpu().item()
-            loss_window.append(loss_value)
+            case_loss_value = case_loss.detach().cpu().item()
+            punct_loss_value = punct_loss.detach().cpu().item()
+            params.case_loss = case_loss_value
+            params.punct_loss = punct_loss_value
 
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            tot_loss = tot_loss + loss_value
+            tot_loss.add(loss_value)
+            tot_case_loss.add(case_loss_value)
+            tot_punct_loss.add(punct_loss_value)
 
             if batch_idx % params.log_interval == 0:
                 # cur_lr = max(scheduler.get_last_lr()) # for StepLR
                 # cur_lr = scheduler.get_last_lr()
                 cur_lr = optimizer.param_groups[0]['lr']  # for ReduceLROnPlateau
+
                 logging.info(
                     f"Epoch {params.cur_epoch}, "
                     f"batch {batch_idx}, "
                     f"lr: [{cur_lr:.2e}], "
                     f"loss[{loss_value}], "
-                    f"loss_avg_100[{sum(loss_window) / len(loss_window):.6f}], "
-                    f"case_loss[{params.case_loss}], "
-                    f"punct_loss[{params.punct_loss}], "
+                    f"case_loss[{case_loss_value}], "
+                    f"punct_loss[{punct_loss_value}], "
+                    f"total_loss[{tot_loss.tot_loss}], "
                 )
-
                 if tb_writer is not None:
                     tb_writer.add_scalar(
                         "train/learning_rate", cur_lr, params.batch_idx_train
@@ -481,10 +507,19 @@ def run(rank, world_size, args):
                         "train/current_loss", loss_value, params.batch_idx_train
                     )
                     tb_writer.add_scalar(
-                        "train/current_loss_avg_100", sum(loss_window) / len(loss_window), params.batch_idx_train
+                        "train/current_case_loss", case_loss_value, params.batch_idx_train
                     )
                     tb_writer.add_scalar(
-                        "train/tot_loss", tot_loss, params.batch_idx_train
+                        "train/current_punct_loss", punct_loss_value, params.batch_idx_train
+                    )
+                    tb_writer.add_scalar(
+                        "train/total_loss", tot_loss.tot_loss, params.batch_idx_train
+                    )
+                    tb_writer.add_scalar(
+                        "train/total_case_loss", tot_case_loss.tot_loss, params.batch_idx_train
+                    )
+                    tb_writer.add_scalar(
+                        "train/total_punct_loss", tot_punct_loss.tot_loss, params.batch_idx_train
                     )
 
             if params.batch_idx_train % params.save_every_n == 0:
@@ -500,7 +535,7 @@ def run(rank, world_size, args):
 
             if (batch_idx + 1) % params.valid_interval == 0:
                 logging.info("start validation")
-                valid_loss = compute_validation_loss(
+                valid_loss, valid_case_loss, valid_punct_loss = compute_validation_loss(
                     params=params,
                     model=model,
                     valid_dl=valid_dl,
@@ -517,20 +552,33 @@ def run(rank, world_size, args):
                     tb_writer.add_scalar(
                         "train/valid_loss", valid_loss, params.batch_idx_train
                     )
-    
+                    tb_writer.add_scalar(
+                        "train/valid_case_loss", valid_case_loss, params.batch_idx_train
+                    )
+                    tb_writer.add_scalar(
+                        "train/valid__punct_loss", valid_punct_loss, params.batch_idx_train
+                    )
+
         logging.info("start validation")
-        valid_loss = compute_validation_loss(
+        valid_loss, valid_case_loss, valid_punct_loss = compute_validation_loss(
             params=params,
             model=model,
             valid_dl=valid_dl,
             device=device,
         )
-        model.train()
+        if tb_writer is not None:
+            tb_writer.add_scalar(
+                "train/valid_loss", valid_loss, params.batch_idx_train
+            )
+            tb_writer.add_scalar(
+                "train/valid_case_loss", valid_case_loss, params.batch_idx_train
+            )
+            tb_writer.add_scalar(
+                "train/valid__punct_loss", valid_punct_loss, params.batch_idx_train
+            )
 
-        # only for ReduceLROnPlateau, should be called after validate()
-        scheduler.step(valid_loss)
-
-        logging.info(f"Epoch {params.cur_epoch}, validation loss[{valid_loss}]")
+        logging.info(
+            f"Epoch {params.cur_epoch}, validation loss[{valid_loss}, case_loss[{valid_case_loss}], punct_loss[{valid_punct_loss}]")
 
         if tb_writer is not None:
             tb_writer.add_scalar(
@@ -539,11 +587,8 @@ def run(rank, world_size, args):
 
         # scheduler.step() # for StepLR
 
-        avg_train_loss = tot_loss / max(1, tb if tb is not None else 0)
-        logging.info(f"Epoch {params.cur_epoch}, average train loss[{avg_train_loss}]")
-
-        if avg_train_loss < params.best_train_loss:
-            params.best_train_loss = avg_train_loss
+        if tot_loss.tot_loss < params.best_train_loss:
+            params.best_train_loss = tot_loss.tot_loss
             params.best_train_epoch = params.cur_epoch
 
         save_checkpoint(

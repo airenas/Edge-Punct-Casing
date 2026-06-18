@@ -85,21 +85,30 @@ train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_
 		--data_dir $(data_dir)/texts \
 		--exp_dir $(exp_dir) \
 		--bpe_model $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
-		--base-lr 0.002 \
+		--base-lr 0.0045 \
 		--epochs $(epochs) \
+		--streaming-shuffle-buffer 30000 \
 		--batch_size $(batch_size) 
 .PHONY: train
 ###################################################################
 ###################################################################
-test: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/test_features.parquet | $(exp_dir)
+batch?=0
+avg?=1
+test: _test/test
+.PHONY: test
+_test/%: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/%_features.parquet | $(exp_dir)
 	$(python_cmd) ./../../decode.py \
 		--world-size $(gpus) \
 		--data_dir $(data_dir)/texts \
 		--exp_dir $(exp_dir) \
 		--bpe_model $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
 		--epoch $(epoch) \
-		--batch_size $(batch_size) 
+		--batch $(batch) \
+		--avg $(avg) \
+		--batch_size $(batch_size) \
+		--file $(data_dir)/texts/$*_features.parquet
 .PHONY: test
+
 _info/%: $(data_dir)/texts/%.txt
 	$(python_cmd) ./local/data_info.py --input $^
 info/test: _info/test

@@ -3,6 +3,7 @@ import logging
 import os
 import random
 from pathlib import Path
+from typing import List, Dict
 
 import sentencepiece as spm
 import torch
@@ -64,7 +65,15 @@ def get_parser():
                         type=int,
                         # required=True,
                         help="The batch pt used for decoding")
-
+    parser.add_argument("--avg",
+                        default=1,
+                        type=int,
+                        # required=True,
+                        help="The number of checkpoints to average for decoding. Should be used together with --epoch or --batch")
+    parser.add_argument("--file",
+                        type=str,
+                        required=True,
+                        help="The test feature file to decode")
     return parser
 
 
@@ -162,6 +171,55 @@ def print_label_counts(logging, output, target, label_map, title):
         )
 
 
+def average_checkpoints(
+        filenames: List[Path], device: torch.device = torch.device("cpu")
+) -> dict:
+    """Average a list of checkpoints.
+
+    Args:
+      filenames:
+        Filenames of the checkpoints to be averaged. We assume all
+        checkpoints are saved by :func:`save_checkpoint`.
+      device:
+        Move checkpoints to this device before averaging.
+    Returns:
+      Return a dict (i.e., state_dict) which is the average of all
+      model state dicts contained in the checkpoints.
+    """
+    n = len(filenames)
+    for filename in filenames:
+        logging.info(f"Loading checkpoint from {filename}")
+
+    avg = torch.load(filenames[0], map_location=device, weights_only=False)["model"]
+
+    # Identify shared parameters. Two parameters are said to be shared
+    # if they have the same data_ptr
+    uniqued: Dict[int, str] = dict()
+
+    for k, v in avg.items():
+        v_data_ptr = v.data_ptr()
+        if v_data_ptr in uniqued:
+            continue
+        uniqued[v_data_ptr] = k
+
+    uniqued_names = list(uniqued.values())
+
+    for i in range(1, n):
+        state_dict = torch.load(filenames[i], map_location=device, weights_only=False)[
+            "model"
+        ]
+        for k in uniqued_names:
+            avg[k] += state_dict[k]
+
+    for k in uniqued_names:
+        if avg[k].is_floating_point():
+            avg[k] /= n
+        else:
+            avg[k] //= n
+
+    return avg
+
+
 @torch.no_grad()
 def main():
     parser = get_parser()
@@ -197,20 +255,26 @@ def main():
     num_param = sum([p.numel() for p in model.parameters()])
     logging.info(f"Number of model parameters: {num_param}")
 
+    files = []
     if params.epoch > 0:
-        ptfile = f"{params.exp_dir}/epoch-{params.epoch - 1}.pt"
+        for i in range(params.avg):
+            files.append(f"{params.exp_dir}/epoch-{params.epoch - i}.pt")
     if params.batch > 0:
-        ptfile = f"{params.exp_dir}/checkpoint-{params.batch}.pt"
-    logging.info(f"Loading checkpoint from {ptfile}")
-    checkpoint = torch.load(ptfile, map_location="cpu")
-    model.load_state_dict(checkpoint["model"], strict=False)
-    checkpoint.pop("model")
+        files = []
+        for i in range(params.avg):
+            files.append(f"{params.exp_dir}/checkpoint-{params.batch - (i * 1000)}.pt")
+    # logging.info(f"Loading checkpoint from {ptfile}")
+    # checkpoint = torch.load(ptfile, map_location="cpu")
+    # checkpoint.pop("model")
+    # model.load_state_dict(checkpoint["model"], strict=False)
+    files.sort()
+    model.load_state_dict(average_checkpoints([Path(f) for f in files]), strict=False)
 
     model.to(device)
     model.eval()
 
     data_module = DataModule(args, sp)
-    decode_dl = data_module.test_dataloader()
+    decode_dl = data_module.test_dataloader(file=args.file)
     logging.info(f"len(decode_dl):{len(decode_dl)}")
 
     all_case_pred = []
@@ -223,7 +287,8 @@ def main():
         batch = tuple(t.to(device) for t in batch)
         token_ids, label_ids, valid_ids, label_lens, label_masks = batch
 
-        active_case_logits, active_punct_logits, mask, indx = model(token_ids, valid_ids=valid_ids, label_lens=label_lens)
+        active_case_logits, active_punct_logits, mask, indx = model(token_ids, valid_ids=valid_ids,
+                                                                    label_lens=label_lens)
 
         # label_lens, indx = torch.sort(label_lens, dim=0, descending=True, stable=True)
         label_ids = label_ids[indx]
@@ -251,13 +316,13 @@ def main():
         "\nCase metrics:\n----------------------------------------------------------------------------------------")
     print_metrics(logging, total_precision_case, total_recall_case, total_f_scores_case, total_overall_case,
                   CASE_ID_MAP)
-    logging.info("\n")                  
+    logging.info("\n")
     print_label_counts(logging, all_case_pred, all_case_labels, CASE_ID_MAP, "Case label counts")
     logging.info(
         "\nPunct metrics:\n=======================================================================================")
     print_metrics(logging, total_precision_punct, total_recall_punct, total_f_scores_punct, total_overall_punct,
                   PUNCTUATION_ID_MAP)
-    logging.info("\n")                  
+    logging.info("\n")
     print_label_counts(logging, all_punct_pred, all_punct_labels, PUNCTUATION_ID_MAP, "Punctuation label counts")
 
 

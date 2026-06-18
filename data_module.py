@@ -178,9 +178,10 @@ class StreamingParquetDataset(IterableDataset):
             if len(buffer) < self.shuffle_buffer_size:
                 buffer.append(sample)
             else:
-                pop_idx = rng.randrange(len(buffer))
-                yield buffer.pop(pop_idx)
-                buffer.append(sample)
+                idx = rng.randrange(len(buffer))
+                res = buffer[idx]
+                buffer[idx] = sample
+                yield res
 
         while buffer:
             pop_idx = rng.randrange(len(buffer))
@@ -200,6 +201,8 @@ class DataModule(object):
         self.test_features_file = f"{self.data_dir}/test_features.parquet"
         self.streaming_num_workers = getattr(self.args, "streaming_num_workers", 0)
         self.streaming_shuffle_buffer = getattr(self.args, "streaming_shuffle_buffer", 10000)
+        logging.info(
+            f"streaming_num_workers: {self.streaming_num_workers}, streaming_shuffle_buffer: {self.streaming_shuffle_buffer}")
 
     def train_dataloader(self) -> DataLoader:
         logging.info(f"Using streaming parquet training dataset from {self.train_features_file}")
@@ -211,6 +214,8 @@ class DataModule(object):
             shuffle_buffer_size=self.streaming_shuffle_buffer,
             seed=getattr(self.args, "seed", 42),
         )
+        logging.info(f"train_dataset length: {len(train_dataset)}")
+
         train_dataloader = DataLoader(
             dataset=train_dataset,
             batch_size=self.args.batch_size,
@@ -235,10 +240,12 @@ class DataModule(object):
         )
         return valid_dataloader
 
-    def test_dataloader(self) -> DataLoader:
-        logging.info(f"Using streaming parquet test dataset from {self.test_features_file}")
+    def test_dataloader(self, file: str = "") -> DataLoader:
+        if not file:
+            file = self.test_features_file
+        logging.info(f"Using streaming parquet test dataset from {file}")
         test_dataset = StreamingParquetDataset(
-            filename=self.test_features_file,
+            filename=file,
             max_seq_length=self.args.max_seq_length,
             world_size=self.args.world_size,
             rank=getattr(self.args, "rank", 0),
