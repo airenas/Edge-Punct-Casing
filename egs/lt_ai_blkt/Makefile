@@ -85,9 +85,9 @@ train: $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model $(data_dir)/texts/train_
 		--data_dir $(data_dir)/texts \
 		--exp_dir $(exp_dir) \
 		--bpe_model $(data_dir)/lang_bpe_$(bpe_vocab_size)/bpe.model \
-		--base-lr 0.0045 \
+		--base-lr 0.002 \
 		--epochs $(epochs) \
-		--streaming-shuffle-buffer 30000 \
+		--streaming-shuffle-buffer 20000 \
 		--batch_size $(batch_size) 
 .PHONY: train
 ###################################################################

@@ -57,7 +57,7 @@ def allowed_punctuation(wrd, punct):
 def skip(w: Word):
     if has_num(w.word):
         return True
-    if w.word in ["I", "II", "V", "III", "IV", "VI", "VII", "VIII", "IX", "X"] and w.mi.startswith("M"):
+    if w.mi.startswith("M") and ("I" in w.word or "X" in w.word or "V" in w.word):
         return True
     if w.mi.startswith("D"):
         return True
@@ -147,6 +147,9 @@ def main():
                 if is_ok(words):
                     ok += 1
                     ws = " ".join(w.word + w.punct for w in words)
+                    if len(ws) < 5: # too short
+                        skip += 1
+                        continue
                     keeper.feed_text(ws)
                 else:
                     skip += 1
