@@ -187,9 +187,6 @@ def get_params() -> AttributeDict:
             "case_loss": -1,
             "punct_loss": -1,
             "total_valid_batches": -1,
-            "epoch": 0,
-            "avg": 1,
-            "batch": 0,
         }
     )
 
