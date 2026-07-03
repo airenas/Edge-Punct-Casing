@@ -220,6 +220,24 @@ def average_checkpoints(
     return avg
 
 
+def load_model_from_disk(model, params):
+    files = []
+    if params.epoch > 0:
+        for i in range(params.avg):
+            files.append(f"{params.exp_dir}/epoch-{params.epoch - i}.pt")
+    if params.batch > 0:
+        files = []
+        for i in range(params.avg):
+            files.append(f"{params.exp_dir}/checkpoint-{params.batch - (i * 1000)}.pt")
+    # logging.info(f"Loading checkpoint from {ptfile}")
+    # checkpoint = torch.load(ptfile, map_location="cpu")
+    # checkpoint.pop("model")
+    # model.load_state_dict(checkpoint["model"], strict=False)
+    files.sort()
+    model.load_state_dict(average_checkpoints([Path(f) for f in files]), strict=False)
+    return model
+
+
 @torch.no_grad()
 def main():
     parser = get_parser()
@@ -255,20 +273,8 @@ def main():
     num_param = sum([p.numel() for p in model.parameters()])
     logging.info(f"Number of model parameters: {num_param}")
 
-    files = []
-    if params.epoch > 0:
-        for i in range(params.avg):
-            files.append(f"{params.exp_dir}/epoch-{params.epoch - i}.pt")
-    if params.batch > 0:
-        files = []
-        for i in range(params.avg):
-            files.append(f"{params.exp_dir}/checkpoint-{params.batch - (i * 1000)}.pt")
-    # logging.info(f"Loading checkpoint from {ptfile}")
-    # checkpoint = torch.load(ptfile, map_location="cpu")
-    # checkpoint.pop("model")
-    # model.load_state_dict(checkpoint["model"], strict=False)
-    files.sort()
-    model.load_state_dict(average_checkpoints([Path(f) for f in files]), strict=False)
+    model = load_model_from_disk(model, params)
+    logging.info(f"Model loaded")
 
     model.to(device)
     model.eval()

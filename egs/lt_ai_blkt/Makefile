@@ -118,7 +118,7 @@ info/test: _info/test
 export: 
 	$(python_cmd) ./../../export-onnx.py \
 		--exp_dir $(exp_dir) \
-		--epoch $(epoch)
+		--epoch $(epoch) --batch $(batch) --avg $(avg)
 .PHONY: export
 ###################################################################
 ## just clean data after download

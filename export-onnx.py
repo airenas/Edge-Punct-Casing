@@ -10,6 +10,7 @@ import torch.nn as nn
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from onnxsim import simplify
 
+from decode import load_model_from_disk
 from egs.lt_ai_blkt.local.case import LOWER, UPPER, CAP, MIX_CASE
 from egs.lt_ai_blkt.local.punctuation import PUNCTUATION_MAP, EXCLAMATION, QUESTION, PERIOD, COMMA, SEMICOLON, DASH, \
     COLON
@@ -43,6 +44,11 @@ def get_parser():
                         type=int,
                         # required=True,
                         help="The batch pt used for decoding")
+    parser.add_argument("--avg",
+                        default=1,
+                        type=int,
+                        # required=True,
+                        help="The number of checkpoints to average for decoding. Should be used together with --epoch or --batch")
 
     return parser
 
@@ -140,16 +146,18 @@ def main():
     model = get_model(params)
     # print("after get model")
 
+    model = load_model_from_disk(model, params)
+
     model.to(device)
 
-    if params.epoch > 0:
-        ptfile = f"{params.exp_dir}/epoch-{params.epoch - 1}.pt"
-    else:
-        ptfile = f"{params.exp_dir}/checkpoint-{params.batch}.pt"
-    logging.info(f"Loading checkpoint from {ptfile}")
-    checkpoint = torch.load(ptfile, map_location="cpu")
-    model.load_state_dict(checkpoint["model"], strict=False)
-    checkpoint.pop("model")
+    # if params.epoch > 0:
+    #     ptfile = f"{params.exp_dir}/epoch-{params.epoch - 1}.pt"
+    # else:
+    #     ptfile = f"{params.exp_dir}/checkpoint-{params.batch}.pt"
+    # logging.info(f"Loading checkpoint from {ptfile}")
+    # checkpoint = torch.load(ptfile, map_location="cpu")
+    # model.load_state_dict(checkpoint["model"], strict=False)
+    # checkpoint.pop("model")
 
     model.to("cpu")
     model.eval()
