@@ -115,7 +115,7 @@ def export_model(
         "LOWER": f"{LOWER}",
         "UPPER": f"{UPPER}",
         "CAP": f"{CAP}",
-        # "MIX_CASE": f"{MIX_CASE}",
+        "MIX_CASE": f"{MIX_CASE}", ## to support default onnx tool - actually not used in the model, but for reference
     }
     logging.info(f"meta_data: {meta_data}")
 
