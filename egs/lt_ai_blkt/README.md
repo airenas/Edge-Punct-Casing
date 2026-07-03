@@ -1,6 +1,6 @@
 # lt_ai_blkt
 
-This setup needs a text corpus split into sentences.
+This setup requires a text corpus split into sentences.
 
 Original corpus: https://huggingface.co/datasets/VSSA-SDSA/LT_AI_BLKT
 
@@ -15,7 +15,7 @@ make export
 
 ## Model
 
-Trained on: 1 376 195 015 words, 98 565 509 sentences
+Trained on 1 376 195 015 words and 98 565 509 sentences.
 
 ```bash
 PYTHONPATH=./../../ LOGLEVEL=INFO python3 ./../../train.py \
@@ -89,7 +89,7 @@ Overall: 	Prec [0.935], 	Rec [0.900], 	F1 [0.917],
 2 -> CAP: predicted [1398309], expected [1454227] (13.28%), correct [1305083]
 ```
 
-### Punct metrics:
+### Punctuation metrics:
 ```txt
 : 	Prec [0.978], 	Rec [0.988], 	F1 [0.983], 
 ,: 	Prec [0.882], 	Rec [0.846], 	F1 [0.864], 
